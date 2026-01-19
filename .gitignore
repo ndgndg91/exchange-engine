@@ -1,0 +1,22 @@
+# IntelliJ
+.idea/
+*.iml
+*.iws
+out/
+
+# Gradle
+.gradle/
+build/
+gradle/wrapper/gradle-wrapper.jar
+
+# Logs
+*.log
+*.cq4
+*.cq4t
+ome-journal/
+
+# Mac
+.DS_Store
+
+# Aeron
+/dev/shm/aeron*
