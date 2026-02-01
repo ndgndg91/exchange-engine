@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import com.exchange.sbe.OrderType
 import com.exchange.sbe.Side
+import com.exchange.sbe.TimeInForce
 
 // Market Data Cache (In-Memory OrderBook Replica)
 object OrderBookCache {
@@ -186,7 +187,27 @@ class HttpApiHandler(private val publisher: AeronPublisher) : SimpleChannelInbou
                 val sideVal = parts[4].trim().toInt()
                 val side = if (sideVal == 1) Side.Buy else Side.Sell
                 
-                publisher.sendOrder(userId, symbolId, price, qty, side, OrderType.Limit, seqId)
+                // Parse optional OrderType (1=Limit, 2=Market, 3=StopLimit, 4=StopMarket)
+                val typeVal = if (parts.size > 5) parts[5].trim().toInt() else 1
+                val type = when (typeVal) {
+                    2 -> OrderType.Market
+                    3 -> OrderType.StopLimit
+                    4 -> OrderType.StopMarket
+                    else -> OrderType.Limit
+                }
+                
+                // Parse optional triggerPrice
+                val triggerPrice = if (parts.size > 6) parts[6].trim().toLong() else 0L
+                
+                // Parse optional TimeInForce (0=GTC, 1=IOC, 2=FOK)
+                val tifVal = if (parts.size > 7) parts[7].trim().toInt() else 0
+                val tif = when (tifVal) {
+                    1 -> TimeInForce.IOC
+                    2 -> TimeInForce.FOK
+                    else -> TimeInForce.GTC
+                }
+                
+                publisher.sendOrder(userId, symbolId, price, qty, side, type, seqId, triggerPrice, tif)
                 sendResponse(ctx, HttpResponseStatus.OK, "Order Sent: $seqId")
             } else if (uri.startsWith("/cancel")) {
                 val userId = parts[0].trim().toLong()

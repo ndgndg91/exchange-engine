@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://fixprotocol.io/2016/sbe http://fixprotocol.io/2016/sbe/sbe.xsd"
                    package="com.exchange.sbe"
                    id="1"
                    version="0"
@@ -31,12 +33,21 @@
         <enum name="OrderType" encodingType="u8">
             <validValue name="Limit">1</validValue>
             <validValue name="Market">2</validValue>
+            <validValue name="StopLimit">3</validValue>
+            <validValue name="StopMarket">4</validValue>
         </enum>
         
         <enum name="ExecType" encodingType="u8">
             <validValue name="Trade">1</validValue>
             <validValue name="Cancel">2</validValue>
             <validValue name="Reject">3</validValue>
+            <validValue name="Triggered">4</validValue>
+        </enum>
+        
+        <enum name="TimeInForce" encodingType="u8">
+            <validValue name="GTC">0</validValue>
+            <validValue name="IOC">1</validValue>
+            <validValue name="FOK">2</validValue>
         </enum>
     </types>
 
@@ -47,13 +58,15 @@
     
     <!-- 1. New Order Single (ID: 100) -->
     <message name="NewOrderSingle" id="100" description="Place a new order">
-        <field name="userId"    id="1" type="u64"/>
-        <field name="symbolId"  id="2" type="i32"/>
-        <field name="price"     id="3" type="i64" description="Price in lowest unit (e.g. satoshis)"/>
-        <field name="qty"       id="4" type="i64" description="Quantity"/>
-        <field name="side"      id="5" type="Side"/>
-        <field name="seqId"     id="6" type="u64" description="Global Sequence ID"/>
-        <field name="orderType" id="7" type="OrderType"/>
+        <field name="userId"       id="1" type="u64"/>
+        <field name="symbolId"     id="2" type="i32"/>
+        <field name="price"        id="3" type="i64" description="Limit Price (if applicable)"/>
+        <field name="qty"          id="4" type="i64" description="Quantity"/>
+        <field name="side"         id="5" type="Side"/>
+        <field name="seqId"        id="6" type="u64" description="Global Sequence ID"/>
+        <field name="orderType"    id="7" type="OrderType"/>
+        <field name="triggerPrice" id="8" type="i64" description="Stop/Trigger Price"/>
+        <field name="tif"          id="9" type="TimeInForce" description="Time In Force"/>
     </message>
 
     <!-- 2. Order Cancel (ID: 101) -->

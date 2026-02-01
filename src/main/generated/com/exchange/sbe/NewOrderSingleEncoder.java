@@ -10,7 +10,7 @@ import org.agrona.MutableDirectBuffer;
 @SuppressWarnings("all")
 public final class NewOrderSingleEncoder
 {
-    public static final int BLOCK_LENGTH = 38;
+    public static final int BLOCK_LENGTH = 47;
     public static final int TEMPLATE_ID = 100;
     public static final int SCHEMA_ID = 1;
     public static final int SCHEMA_VERSION = 0;
@@ -433,6 +433,94 @@ public final class NewOrderSingleEncoder
     public NewOrderSingleEncoder orderType(final OrderType value)
     {
         buffer.putByte(offset + 37, (byte)value.value());
+        return this;
+    }
+
+    public static int triggerPriceId()
+    {
+        return 8;
+    }
+
+    public static int triggerPriceSinceVersion()
+    {
+        return 0;
+    }
+
+    public static int triggerPriceEncodingOffset()
+    {
+        return 38;
+    }
+
+    public static int triggerPriceEncodingLength()
+    {
+        return 8;
+    }
+
+    public static String triggerPriceMetaAttribute(final MetaAttribute metaAttribute)
+    {
+        if (MetaAttribute.PRESENCE == metaAttribute)
+        {
+            return "required";
+        }
+
+        return "";
+    }
+
+    public static long triggerPriceNullValue()
+    {
+        return -9223372036854775808L;
+    }
+
+    public static long triggerPriceMinValue()
+    {
+        return -9223372036854775807L;
+    }
+
+    public static long triggerPriceMaxValue()
+    {
+        return 9223372036854775807L;
+    }
+
+    public NewOrderSingleEncoder triggerPrice(final long value)
+    {
+        buffer.putLong(offset + 38, value, java.nio.ByteOrder.LITTLE_ENDIAN);
+        return this;
+    }
+
+
+    public static int tifId()
+    {
+        return 9;
+    }
+
+    public static int tifSinceVersion()
+    {
+        return 0;
+    }
+
+    public static int tifEncodingOffset()
+    {
+        return 46;
+    }
+
+    public static int tifEncodingLength()
+    {
+        return 1;
+    }
+
+    public static String tifMetaAttribute(final MetaAttribute metaAttribute)
+    {
+        if (MetaAttribute.PRESENCE == metaAttribute)
+        {
+            return "required";
+        }
+
+        return "";
+    }
+
+    public NewOrderSingleEncoder tif(final TimeInForce value)
+    {
+        buffer.putByte(offset + 46, (byte)value.value());
         return this;
     }
 

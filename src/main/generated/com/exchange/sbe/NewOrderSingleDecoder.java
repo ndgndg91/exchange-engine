@@ -10,7 +10,7 @@ import org.agrona.DirectBuffer;
 @SuppressWarnings("all")
 public final class NewOrderSingleDecoder
 {
-    public static final int BLOCK_LENGTH = 38;
+    public static final int BLOCK_LENGTH = 47;
     public static final int TEMPLATE_ID = 100;
     public static final int SCHEMA_ID = 1;
     public static final int SCHEMA_VERSION = 0;
@@ -476,6 +476,98 @@ public final class NewOrderSingleDecoder
     }
 
 
+    public static int triggerPriceId()
+    {
+        return 8;
+    }
+
+    public static int triggerPriceSinceVersion()
+    {
+        return 0;
+    }
+
+    public static int triggerPriceEncodingOffset()
+    {
+        return 38;
+    }
+
+    public static int triggerPriceEncodingLength()
+    {
+        return 8;
+    }
+
+    public static String triggerPriceMetaAttribute(final MetaAttribute metaAttribute)
+    {
+        if (MetaAttribute.PRESENCE == metaAttribute)
+        {
+            return "required";
+        }
+
+        return "";
+    }
+
+    public static long triggerPriceNullValue()
+    {
+        return -9223372036854775808L;
+    }
+
+    public static long triggerPriceMinValue()
+    {
+        return -9223372036854775807L;
+    }
+
+    public static long triggerPriceMaxValue()
+    {
+        return 9223372036854775807L;
+    }
+
+    public long triggerPrice()
+    {
+        return buffer.getLong(offset + 38, java.nio.ByteOrder.LITTLE_ENDIAN);
+    }
+
+
+    public static int tifId()
+    {
+        return 9;
+    }
+
+    public static int tifSinceVersion()
+    {
+        return 0;
+    }
+
+    public static int tifEncodingOffset()
+    {
+        return 46;
+    }
+
+    public static int tifEncodingLength()
+    {
+        return 1;
+    }
+
+    public static String tifMetaAttribute(final MetaAttribute metaAttribute)
+    {
+        if (MetaAttribute.PRESENCE == metaAttribute)
+        {
+            return "required";
+        }
+
+        return "";
+    }
+
+    public short tifRaw()
+    {
+        return ((short)(buffer.getByte(offset + 46) & 0xFF));
+    }
+
+    public TimeInForce tif()
+    {
+        return TimeInForce.get(((short)(buffer.getByte(offset + 46) & 0xFF)));
+    }
+
+
     public String toString()
     {
         if (null == buffer)
@@ -537,6 +629,12 @@ public final class NewOrderSingleDecoder
         builder.append('|');
         builder.append("orderType=");
         builder.append(this.orderType());
+        builder.append('|');
+        builder.append("triggerPrice=");
+        builder.append(this.triggerPrice());
+        builder.append('|');
+        builder.append("tif=");
+        builder.append(this.tif());
 
         limit(originalLimit);
 

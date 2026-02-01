@@ -10,6 +10,8 @@ public enum ExecType
 
     Reject((short)3),
 
+    Triggered((short)4),
+
     /**
      * To be used to represent not present or null.
      */
@@ -45,6 +47,7 @@ public enum ExecType
             case 1: return Trade;
             case 2: return Cancel;
             case 3: return Reject;
+            case 4: return Triggered;
             case 255: return NULL_VAL;
         }
 

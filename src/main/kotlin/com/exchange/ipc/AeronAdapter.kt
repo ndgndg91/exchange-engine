@@ -1,16 +1,15 @@
 package com.exchange.ipc
 
+import com.exchange.OrderEvent
 import com.exchange.sbe.*
+import com.lmax.disruptor.RingBuffer
 import io.aeron.Aeron
 import io.aeron.ConcurrentPublication
 import io.aeron.Subscription
-import io.aeron.driver.MediaDriver
 import io.aeron.logbuffer.FragmentHandler
-import org.agrona.concurrent.UnsafeBuffer
 import org.agrona.concurrent.BusySpinIdleStrategy
+import org.agrona.concurrent.UnsafeBuffer
 import java.nio.ByteBuffer
-import com.lmax.disruptor.RingBuffer
-import com.exchange.OrderEvent
 
 object ExchangeConstants {
     // IPC Channel for local testing (fastest)
@@ -60,7 +59,7 @@ class AeronPublisher(private val aeron: Aeron) {
         }
     }
 
-    fun sendOrderToEngine(userId: Long, symbolId: Int, price: Long, qty: Long, side: Side, type: OrderType, seqId: Long) {
+    fun sendOrderToEngine(userId: Long, symbolId: Int, price: Long, qty: Long, side: Side, type: OrderType, seqId: Long, triggerPrice: Long = 0, tif: TimeInForce = TimeInForce.GTC) {
         while (!enginePublication.isConnected) {
             Thread.yield()
         }
@@ -79,6 +78,8 @@ class AeronPublisher(private val aeron: Aeron) {
             .side(side)
             .seqId(seqId)
             .orderType(type)
+            .triggerPrice(triggerPrice)
+            .tif(tif)
 
         val length = headerEncoder.encodedLength() + newOrderEncoder.encodedLength()
 
@@ -119,7 +120,7 @@ class AeronPublisher(private val aeron: Aeron) {
         }
     }
 
-    fun sendOrder(userId: Long, symbolId: Int, price: Long, qty: Long, side: Side, type: OrderType, seqId: Long) {
+    fun sendOrder(userId: Long, symbolId: Int, price: Long, qty: Long, side: Side, type: OrderType, seqId: Long, triggerPrice: Long = 0, tif: TimeInForce = TimeInForce.GTC) {
         // Wait for connection
         while (!publication.isConnected) {
             Thread.yield()
@@ -141,6 +142,8 @@ class AeronPublisher(private val aeron: Aeron) {
             .side(side)
             .seqId(seqId)
             .orderType(type)
+            .triggerPrice(triggerPrice)
+            .tif(tif)
 
         val length = headerEncoder.encodedLength() + newOrderEncoder.encodedLength()
 
@@ -303,6 +306,8 @@ class AeronSubscriber(
                 event.qty = newOrderDecoder.qty()
                 event.side = newOrderDecoder.side()
                 event.orderType = newOrderDecoder.orderType()
+                event.triggerPrice = newOrderDecoder.triggerPrice()
+                event.tif = newOrderDecoder.tif()
             } finally {
                 disruptorRingBuffer.publish(seq)
             }

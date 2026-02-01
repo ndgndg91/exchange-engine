@@ -61,7 +61,9 @@ class OmeEngine(
                 cmdNewOrderDecoder.qty(),
                 cmdNewOrderDecoder.side(),
                 cmdNewOrderDecoder.orderType(),
-                cmdNewOrderDecoder.seqId()
+                cmdNewOrderDecoder.seqId(),
+                cmdNewOrderDecoder.triggerPrice(),
+                cmdNewOrderDecoder.tif()
             )
         } else if (templateId == DepositDecoder.TEMPLATE_ID) {
             cmdDepositDecoder.wrap(buffer, bodyOffset, actingBlockLength, actingVersion)
@@ -120,7 +122,9 @@ class OmeEngine(
         qty: Long, 
         side: Side, 
         type: OrderType, 
-        seqId: Long
+        seqId: Long,
+        triggerPrice: Long = 0,
+        tif: TimeInForce = TimeInForce.GTC
     ) {
         // 1. Risk Check
         if (!riskEngine.preCheckOrder(userId, symbolId, side, price, qty)) {
@@ -143,6 +147,8 @@ class OmeEngine(
             .side(side)
             .seqId(seqId)
             .orderType(type)
+            .triggerPrice(triggerPrice)
+            .tif(tif)
 
         val length = headerEncoder.encodedLength() + newOrderEncoder.encodedLength()
 
@@ -150,7 +156,7 @@ class OmeEngine(
         journal.write(tempBuffer, 0, length)
 
         // 4. Publish to ME (Stream 11)
-        publisher.sendOrderToEngine(userId, symbolId, price, qty, side, type, seqId)
+        publisher.sendOrderToEngine(userId, symbolId, price, qty, side, type, seqId, triggerPrice, tif)
     }
 
     fun onDeposit(userId: Long, currencyId: Int, amount: Long, seqId: Long) {

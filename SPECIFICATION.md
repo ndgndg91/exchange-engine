@@ -88,18 +88,23 @@
 
 # 5. 향후 개발 로드맵 (Future Roadmap)
 
-## Phase 1: 안정화 및 기능 확장 (Current)
+## Phase 1: 안정화 및 기능 확장 (Completed)
 - [x] OME Gatekeeper 아키텍처 (Risk Check)
 - [x] 주문 취소 및 환불 (Refund) 로직
 - [x] 오더북 스냅샷 API
 - [x] DB 스키마 자동 초기화 및 Currency 관리
 
-## Phase 2: 실시간성 및 확장성 (Next Steps)
+## Phase 2: 고급 주문 유형 (Completed)
+- [x] **Market Orders:** 시장가 주문 지원.
+- [x] **Stop Orders:** Stop-Limit 및 Stop-Market 주문 지원.
+- [x] **Time-In-Force:** IOC (Immediate or Cancel) 및 GTC 지원.
+
+## Phase 3: 실시간성 및 확장성 (Next Steps)
 - [ ] **Redis Pub/Sub:** Gateway가 Aeron 이벤트를 Redis로 발행하여 WebSocket 서버와 분리.
 - [ ] **WebSocket Server:** 실시간 호가창 및 체결 알림 Push 서버 구축.
 - [ ] **Recovery:** 서버 재시작 시 Journal(Chronicle Queue) Replay를 통한 메모리 상태 복구.
 
-## Phase 3: 상용화 준비 (Production)
+## Phase 4: 상용화 준비 (Production)
 - [ ] **Aeron Cluster:** Raft 합의 알고리즘을 통한 고가용성(HA) 구성.
 - [ ] **Market Data Feed:** 별도의 Market Data Processor 구축 (Candle chart 생성 등).
 - [ ] **Monitoring:** Prometheus/Grafana 연동 (HdrHistogram 활용).

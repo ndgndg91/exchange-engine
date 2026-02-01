@@ -101,22 +101,28 @@ Starts Gateway, OME, ME, and Worker in a single script.
 
 ## 📚 API Reference (8080)
 
-| Method | Endpoint | Body (CSV Format) | Description |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/deposit` | `userId,currencyId,amount` | Deposit funds |
-| `POST` | `/order` | `userId,symbolId,price,qty,side` | Place Limit Order |
-| `POST` | `/cancel` | `userId,orderId,symbolId` | Cancel active order |
-| `GET` | `/orderbook` | `?symbolId=1` | Get OrderBook Snapshot |
+| Method | Endpoint     | Body (CSV Format)                | Description            |
+|:-------|:-------------|:---------------------------------|:-----------------------|
+| `POST` | `/deposit`   | `userId,currencyId,amount`       | Deposit funds          |
+| `POST` | `/order`     | `userId,symbolId,price,qty,side` | Place Limit Order      |
+| `POST` | `/cancel`    | `userId,orderId,symbolId`        | Cancel active order    |
+| `GET`  | `/orderbook` | `?symbolId=1`                    | Get OrderBook Snapshot |
 
 ---
 
 ## 🔮 Roadmap
 
-### Phase 2: Advanced Trading Features
-*   **Market Orders & Stop Orders:** Support for immediate execution and trigger-based orders.
-*   **GTC/IOC/FOK:** Support for different Time-In-Force options.
+### Phase 1: Core Matching & Architecture (Completed)
+*   **Zero-GC Matching Engine:** LMAX Disruptor & Aeron based engine.
+*   **Risk Engine (OME):** Pre-trade risk checks and asset locking.
+*   **Persistence:** Asynchronous journaling to PostgreSQL.
 
-### Phase 3: Scalability & Real-time
+### Phase 2: Advanced Trading Features (Completed)
+*   **Market Orders:** Immediate execution against the best available prices.
+*   **Stop Orders:** Trigger-based orders (Stop-Limit, Stop-Market) for risk management.
+*   **Time-In-Force:** Support for `IOC` (Immediate or Cancel) and `GTC` (Good Till Cancel).
+
+### Phase 3: Scalability & Real-time (Next)
 *   **Redis Pub/Sub & WebSockets:** Decouple Gateway and provide real-time push for orderbooks and trades.
 *   **Recovery Engine:** Automated state recovery from `ome-journal/` files on startup.
 

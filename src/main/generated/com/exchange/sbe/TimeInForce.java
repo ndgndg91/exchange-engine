@@ -2,15 +2,13 @@
 package com.exchange.sbe;
 
 @SuppressWarnings("all")
-public enum OrderType
+public enum TimeInForce
 {
-    Limit((short)1),
+    GTC((short)0),
 
-    Market((short)2),
+    IOC((short)1),
 
-    StopLimit((short)3),
-
-    StopMarket((short)4),
+    FOK((short)2),
 
     /**
      * To be used to represent not present or null.
@@ -19,7 +17,7 @@ public enum OrderType
 
     private final short value;
 
-    OrderType(final short value)
+    TimeInForce(final short value)
     {
         this.value = value;
     }
@@ -40,14 +38,13 @@ public enum OrderType
      * @param value encoded to be looked up.
      * @return the enum value representing the value.
      */
-    public static OrderType get(final short value)
+    public static TimeInForce get(final short value)
     {
         switch (value)
         {
-            case 1: return Limit;
-            case 2: return Market;
-            case 3: return StopLimit;
-            case 4: return StopMarket;
+            case 0: return GTC;
+            case 1: return IOC;
+            case 2: return FOK;
             case 255: return NULL_VAL;
         }
 

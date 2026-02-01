@@ -2,6 +2,8 @@ package com.exchange.core
 
 import com.exchange.model.Order
 import com.exchange.sbe.Side
+import com.exchange.sbe.OrderType
+import com.exchange.sbe.TimeInForce
 import org.eclipse.collections.impl.map.mutable.primitive.LongObjectHashMap
 import org.eclipse.collections.api.list.MutableList
 import org.eclipse.collections.impl.factory.Lists
@@ -74,7 +76,7 @@ class OrderBook(val symbolId: Int) {
         
         // Copy to return before clearing
         val cancelledOrder = Order()
-        cancelledOrder.set(order.orderId, order.userId, order.price, order.qty, order.side, order.type)
+        cancelledOrder.set(order.orderId, order.userId, order.price, order.qty, order.side, order.type, 0, order.tif)
         
         // Return to pool
         returnOrder(order)
@@ -99,7 +101,10 @@ class OrderBook(val symbolId: Int) {
 
         while (priceIter.hasNext() && taker.qty > 0) {
             val bestPrice = priceIter.next()
-            if (!priceCheck(bestPrice, taker.price)) break
+            
+            // Market Order: Ignore Price Check
+            // Limit Order: Check Price
+            if (taker.type != OrderType.Market && !priceCheck(bestPrice, taker.price)) break
 
             val ordersAtLevel = opposingBook.get(bestPrice)
             val orderIter = ordersAtLevel.iterator()
@@ -132,10 +137,11 @@ class OrderBook(val symbolId: Int) {
             }
         }
 
-        // Rest in book (Maker)
-        if (taker.qty > 0) {
+        // Rest in book (Maker) - ONLY if Limit Order AND NOT IOC
+        // Market Order = IOC behavior
+        if (taker.qty > 0 && taker.type != OrderType.Market && taker.tif != TimeInForce.IOC) {
             val bookOrder = borrowOrder()
-            bookOrder.set(taker.orderId, taker.userId, taker.price, taker.qty, taker.side, taker.type)
+            bookOrder.set(taker.orderId, taker.userId, taker.price, taker.qty, taker.side, taker.type, 0, taker.tif)
             
             var list = myBook.get(taker.price)
             if (list == null) {

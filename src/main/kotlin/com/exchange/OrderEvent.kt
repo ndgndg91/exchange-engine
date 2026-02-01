@@ -2,6 +2,7 @@ package com.exchange
 
 import com.exchange.sbe.Side
 import com.exchange.sbe.OrderType
+import com.exchange.sbe.TimeInForce
 import com.lmax.disruptor.EventFactory
 
 // 1. Event: The carrier of data in the RingBuffer
@@ -14,6 +15,8 @@ class OrderEvent {
     var qty: Long = 0
     var side: Side = Side.NULL_VAL
     var orderType: OrderType = OrderType.NULL_VAL
+    var triggerPrice: Long = 0
+    var tif: TimeInForce = TimeInForce.GTC
     
     fun clear() {
         type = 0
@@ -24,6 +27,8 @@ class OrderEvent {
         qty = 0
         side = Side.NULL_VAL
         orderType = OrderType.NULL_VAL
+        triggerPrice = 0
+        tif = TimeInForce.GTC
     }
 }
 
