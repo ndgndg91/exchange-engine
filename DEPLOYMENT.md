@@ -2,60 +2,54 @@
 
 ## 1. 사전 요구 사항 (Prerequisites)
 
-- **Java JDK 21+** (Project uses Java 21 features like Virtual Threads/Preview if enabled, and specific GC options)
-- **Docker** (For PostgreSQL Database)
-- **Gradle** (Included via wrapper)
+- **Java JDK 21+** (Amazon Corretto 권장)
+- **Rust 1.75+** (Cargo 포함)
+- **Docker** (PostgreSQL 실행용)
+- **Python 3.x** (시뮬레이터 실행용)
 
-## 2. 로컬 실행 (Local Development)
-
-### 2.1 데이터베이스 실행
-로컬 테스트를 위해 PostgreSQL 컨테이너를 실행해야 합니다. `PersistenceWorker`가 시작 시 필요한 테이블(`currencies`, `orders` 등)을 자동으로 생성합니다.
+## 2. 데이터베이스 설정
+PostgreSQL 컨테이너를 실행합니다.
 ```bash
 docker run --name exchange-db -e POSTGRES_PASSWORD=pass -p 5432:5432 -d postgres:15
 ```
 
-### 2.2 빌드 (Build)
-```bash
-./gradlew shadowJar
-```
+## 3. 언어별 실행 방법
 
-### 2.3 전체 시스템 실행 (Run All)
-스크립트 하나로 Gateway, OME, ME, Worker를 모두 실행합니다.
+### 3.1 JVM (Kotlin) 버전
 ```bash
+# 빌드 (Shadow JAR 생성)
+./gradlew :jvm:shadowJar
+
+# 실행 (8080 포트)
 ./run-local.sh
 ```
-*   로그 파일: `me.log`, `ome.log`, `worker.log`, `gateway.log`
+* 로그: `me.log`, `ome.log`, `worker.log`, `gateway.log`
 
-## 3. 테스트 (Testing)
-
-### 3.1 기본 거래 테스트 (Basic Trading)
-입금 -> 매수/매도 주문 -> 체결 확인.
+### 3.2 Rust 버전
 ```bash
-./test-scenario.sh
+# 빌드
+cd rust && cargo build --release && cd ..
+
+# 실행 (8080 포트)
+./run-local-rust.sh
+```
+* 로그: `me_rust.log`, `ome_rust.log`, `worker_rust.log`, `gateway_rust.log`
+
+## 4. 검증 및 테스트
+
+### 4.1 통합 정합성 테스트
+서버 구동 후 모든 테이블의 데이터 정합성을 자동으로 검증합니다.
+```bash
+./scripts/verify-integrity.sh
 ```
 
-### 3.2 오더북 및 리스크 관리 테스트 (OrderBook & Risk)
-잔고 부족 시 주문 차단 확인 및 호가창 조회.
+### 4.2 대규모 시장 시뮬레이션
+실제 유저들이 거래하는 것과 유사한 부하를 생성합니다 (약 2,500건의 주문/체결).
 ```bash
-./test-orderbook.sh
+python3 scripts/simulate-market.py
 ```
 
-### 3.3 주문 취소 테스트 (Cancel)
-주문 생성 -> 취소 -> 오더북 제거 및 환불(Refund) 확인.
-```bash
-./test-cancel.sh
-```
-
-## 4. 운영 환경 배포 고려사항 (Production on EKS)
-
-### 4.1 Aeron 설정
-- **Multicast:** EKS(AWS VPC CNI) 환경에서 Aeron UDP Multicast를 사용하려면 `Transit Gateway Multicast` 설정이 필요할 수 있습니다. 초기 단계에서는 `Aeron UDP Unicast` (1:1) 또는 `Aeron MDC (Multi-Destination Cast)`를 사용하는 것이 설정상 용이합니다.
-- **Shared Memory:** 단일 파드 내에서 여러 컨테이너(Sidecar 패턴)로 실행할 경우 `/dev/shm` 볼륨 공유가 필수입니다.
-
-### 4.2 인프라 스펙
-- **CPU Pinning:** 매칭 엔진(ME) 스레드는 `isolcpus` 설정된 노드에서 실행하거나, K8s `CPU Manager Policy: static`을 사용하여 전용 코어를 할당받아야 Context Switching 오버헤드를 최소화할 수 있습니다.
-- **StatefulSet:** 각 엔진(Shard)은 고유한 상태를 가지므로 Deployment가 아닌 StatefulSet으로 배포해야 하며, PVC를 통해 Journal(로그)을 영구 보존해야 합니다.
-
-### 4.3 데이터베이스
-- **AWS Aurora PostgreSQL:** 고가용성 및 성능을 위해 Aurora 사용 권장.
-- **Connection Pool:** HikariCP 설정을 운영 부하에 맞게 튜닝해야 합니다.
+## 5. 운영 환경 고려사항
+- **Aeron IPC**: 운영 환경에서는 전용 미디어 드라이버를 실행하고 메모리 맵 파일 경로(`/dev/shm`)를 공유해야 합니다.
+- **CPU Pinning**: 고성능 보장을 위해 매칭 엔진 스레드를 특정 코어에 격리하는 설정이 필요합니다.
+- **Scale Factor**: 상장된 코인마다 다른 Scale 값을 `currencies` 테이블에서 관리하며, 모든 엔진은 이를 동적으로 참조하도록 구성해야 합니다.

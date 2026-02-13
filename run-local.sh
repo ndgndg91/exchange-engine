@@ -1,8 +1,10 @@
 #!/bin/bash
 
 # Configuration
-JAR_PATH="build/libs/exchange-engine-1.0-SNAPSHOT-all.jar"
+JAR_PATH="jvm/build/libs/jvm-1.0-SNAPSHOT-all.jar"
 AERON_DIR="/tmp/aeron-local-test"
+export JAVA_HOME="/Library/Java/JavaVirtualMachines/amazon-corretto-21.jdk/Contents/Home"
+export PATH="$JAVA_HOME/bin:$PATH"
 
 # Cleanup previous run
 echo "Cleaning up previous run..."
