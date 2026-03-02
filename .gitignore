@@ -20,3 +20,4 @@ ome-journal/
 
 # Aeron
 /dev/shm/aeron*
+rust/target/
