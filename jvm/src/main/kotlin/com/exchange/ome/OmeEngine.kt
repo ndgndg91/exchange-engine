@@ -17,7 +17,9 @@ class OmeEngine(
     private val eventSubscriber: AeronEventSubscriber
     
     // Command Subscriber (Gateway -> OME)
-    private val commandSubscription = aeron.addSubscription(com.exchange.ipc.ExchangeConstants.CHANNEL, com.exchange.ipc.ExchangeConstants.STREAM_ID)
+    private val commandSubscription = com.exchange.ipc.ExchangeConstants.retryAeronAction("CommandSub") {
+        aeron.addSubscription(com.exchange.ipc.ExchangeConstants.SUB_CHANNEL, com.exchange.ipc.ExchangeConstants.STREAM_ID)
+    }
     private val cmdHeaderDecoder = MessageHeaderDecoder()
     private val cmdNewOrderDecoder = NewOrderSingleDecoder()
     private val cmdDepositDecoder = DepositDecoder()
@@ -126,9 +128,9 @@ class OmeEngine(
         triggerPrice: Long = 0,
         tif: TimeInForce = TimeInForce.GTC
     ) {
-        // 1. Risk Check
-        if (!riskEngine.preCheckOrder(userId, symbolId, side, price, qty)) {
-            println("Risk Check Failed for User $userId Side $side")
+        // 1. Risk Check (with Idempotency)
+        if (!riskEngine.preCheckOrder(userId, symbolId, side, price, qty, seqId)) {
+            // Log warning: either insufficient funds or already processed
             return
         }
 

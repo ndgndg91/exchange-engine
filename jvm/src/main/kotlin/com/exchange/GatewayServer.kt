@@ -53,8 +53,8 @@ class HttpGatewayServer(private val publisher: AeronPublisher) {
                     }
                 })
                 .option(ChannelOption.SO_BACKLOG, 128)
-            println("Gateway HTTP Server started on port $port")
-            b.bind(port).sync()
+            println("Gateway HTTP Server started on 0.0.0.0:$port")
+            b.bind("0.0.0.0", port).sync()
         } catch (e: Exception) { e.printStackTrace() }
     }
 }
@@ -63,36 +63,49 @@ class HttpApiHandler(private val publisher: AeronPublisher) : SimpleChannelInbou
     private val seqIdGenerator = AtomicLong(System.currentTimeMillis())
     private val mapper = jacksonObjectMapper()
 
-    data class OrderReq(val user_id: Long, val symbol_id: Int, val price: Long, val qty: Long, val side: Int)
+    data class OrderReq(
+        val user_id: Long, 
+        val symbol_id: Int, 
+        val price: Long, 
+        val qty: Long, 
+        val side: Int, 
+        val order_type: Int? = 1, // Default to Limit
+        val trigger_price: Long? = 0,
+        val tif: Int? = 0 // Default to GTC
+    )
+    data class CancelReq(val user_id: Long, val order_id: Long, val symbol_id: Int)
     data class DepositReq(val user_id: Long, val currency_id: Int, val amount: Long)
 
     override fun channelRead0(ctx: ChannelHandlerContext, req: FullHttpRequest) {
-        if (req.method() == HttpMethod.GET && req.uri().startsWith("/orderbook")) {
-             val symbolId = req.uri().substringAfter("symbolId=", "1").takeWhile { it.isDigit() }.toInt()
-             val snapshot = OrderBookCache.get(symbolId)
-             val res = if (snapshot == null) "{ \"symbolId\": $symbolId, \"bids\": [], \"asks\": [] }" else {
-                 val sb = StringBuilder("{ \"symbolId\": $symbolId, \"bids\": [")
-                 for (i in 0 until 5) if (snapshot.bidPrices[i] != 0L) sb.append("[${snapshot.bidPrices[i]}, ${snapshot.bidQtys[i]}],")
-                 if (sb.endsWith(",")) sb.setLength(sb.length - 1)
-                 sb.append("], \"asks\": [")
-                 for (i in 0 until 5) if (snapshot.askPrices[i] != 0L) sb.append("[${snapshot.askPrices[i]}, ${snapshot.askQtys[i]}],")
-                 if (sb.endsWith(",")) sb.setLength(sb.length - 1)
-                 sb.append("] }")
-                 sb.toString()
-             }
-             sendResponse(ctx, HttpResponseStatus.OK, res)
-             return
-        }
-
-        if (req.method() != HttpMethod.POST) {
-            sendResponse(ctx, HttpResponseStatus.METHOD_NOT_ALLOWED, "POST Only")
-            return
-        }
-
-        val content = req.content().toString(CharsetUtil.UTF_8)
-        val seqId = seqIdGenerator.incrementAndGet()
-
         try {
+            if (req.method() == HttpMethod.GET && req.uri().startsWith("/orderbook")) {
+                 // ... existing orderbook logic ...
+                 val symbolId = req.uri().substringAfter("symbolId=", "1").takeWhile { it.isDigit() }.toInt()
+                 val snapshot = OrderBookCache.get(symbolId)
+                 val res = if (snapshot == null) "{ \"symbolId\": $symbolId, \"bids\": [], \"asks\": [] }" else {
+                     val sb = StringBuilder("{ \"symbolId\": $symbolId, \"bids\": [")
+                     for (i in 0 until 5) if (snapshot.bidPrices[i] != 0L) sb.append("[${snapshot.bidPrices[i]}, ${snapshot.bidQtys[i]}],")
+                     if (sb.endsWith(",")) sb.setLength(sb.length - 1)
+                     sb.append("], \"asks\": [")
+                     for (i in 0 until 5) if (snapshot.askPrices[i] != 0L) sb.append("[${snapshot.askPrices[i]}, ${snapshot.askQtys[i]}],")
+                     if (sb.endsWith(",")) sb.setLength(sb.length - 1)
+                     sb.append("] }")
+                     sb.toString()
+                 }
+                 sendResponse(ctx, HttpResponseStatus.OK, res)
+                 return
+            }
+
+            if (req.method() != HttpMethod.POST) {
+                sendResponse(ctx, HttpResponseStatus.METHOD_NOT_ALLOWED, "POST Only")
+                return
+            }
+
+            val content = req.content().toString(CharsetUtil.UTF_8)
+            val seqId = seqIdGenerator.incrementAndGet()
+
+            println("GATEWAY HTTP REQ: ${req.method()} ${req.uri()} - Body: $content")
+
             if (req.uri().startsWith("/deposit")) {
                 val d = mapper.readValue<DepositReq>(content)
                 val buffer = UnsafeBuffer(ByteBuffer.allocateDirect(256))
@@ -105,11 +118,19 @@ class HttpApiHandler(private val publisher: AeronPublisher) : SimpleChannelInbou
             } else if (req.uri().startsWith("/order")) {
                 val o = mapper.readValue<OrderReq>(content)
                 val side = if (o.side == 1) Side.Buy else Side.Sell
-                publisher.sendOrder(o.user_id, o.symbol_id, o.price, o.qty, side, OrderType.Limit, seqId)
+                val type = OrderType.get((o.order_type ?: 1).toShort())
+                val tif = TimeInForce.get((o.tif ?: 0).toShort())
+                publisher.sendOrder(o.user_id, o.symbol_id, o.price, o.qty, side, type, seqId, o.trigger_price ?: 0, tif)
                 sendResponse(ctx, HttpResponseStatus.OK, "Order Sent: $seqId")
+            } else if (req.uri().startsWith("/cancel")) {
+                val c = mapper.readValue<CancelReq>(content)
+                publisher.sendCancel(c.user_id, c.order_id, c.symbol_id, seqId)
+                sendResponse(ctx, HttpResponseStatus.OK, "Cancel Sent: $seqId")
             }
         } catch (e: Exception) {
-            sendResponse(ctx, HttpResponseStatus.BAD_REQUEST, "Error: ${e.message}")
+            println("GATEWAY ERROR: ${e.message}")
+            e.printStackTrace()
+            sendResponse(ctx, HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error: ${e.message}")
         }
     }
 
@@ -135,7 +156,9 @@ class SbeHandler(private val publisher: AeronPublisher) : ChannelInboundHandlerA
 }
 
 class MarketDataSubscriber(aeron: Aeron) {
-    private val subscription = aeron.addSubscription(ExchangeConstants.CHANNEL, ExchangeConstants.EVENT_STREAM_ID)
+    private val subscription = com.exchange.ipc.ExchangeConstants.retryAeronAction("MarketDataSub") {
+        aeron.addSubscription(com.exchange.ipc.ExchangeConstants.SUB_CHANNEL, com.exchange.ipc.ExchangeConstants.EVENT_STREAM_ID)
+    }
     private val headerDecoder = MessageHeaderDecoder()
     private val snapshotDecoder = OrderBookSnapshotDecoder()
     private val handler = FragmentHandler { buffer, offset, _, _ ->
@@ -169,7 +192,7 @@ fun main(args: Array<String>) {
     val publisher = AeronPublisher(aeron)
     val mdSubscriber = MarketDataSubscriber(aeron)
     Thread {
-        val idle = org.agrona.concurrent.BusySpinIdleStrategy()
+        val idle = org.agrona.concurrent.SleepingIdleStrategy(1_000_000) // 1ms sleep to prevent CPU starvation
         while (true) idle.idle(mdSubscriber.poll(10))
     }.start()
     HttpGatewayServer(publisher).start(8080)

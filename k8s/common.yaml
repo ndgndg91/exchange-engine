@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: matching-engine
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - port: 40124
+      protocol: UDP
+  selector:
+    app: matching-engine
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ome
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - port: 40123
+      protocol: UDP
+  selector:
+    app: ome
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  ports:
+    - port: 8080
+  selector:
+    app: gateway

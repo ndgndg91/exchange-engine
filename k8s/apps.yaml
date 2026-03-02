@@ -1,0 +1,128 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: exchange-config
+data:
+  DB_HOST: "exchange-db"
+  # Roles: PUB points to the destination, SUB binds to local 0.0.0.0
+  PUB_TO_ME: "aeron:udp?endpoint=matching-engine:40124"
+  PUB_TO_OME: "aeron:udp?endpoint=ome:40123"
+  SUB_LISTEN_ME: "aeron:udp?endpoint=0.0.0.0:40124"
+  SUB_LISTEN_OME: "aeron:udp?endpoint=0.0.0.0:40123"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matching-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: matching-engine
+  template:
+    metadata:
+      labels:
+        app: matching-engine
+    spec:
+      volumes:
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 256Mi }
+      containers:
+        - name: matching-engine
+          image: exchange-engine-matching-engine:v-pure-final
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+          env:
+            - name: MAIN_CLASS
+              value: "com.exchange.MatchingServerKt"
+            - name: ARGS
+              value: "--embedded-driver"
+            - name: AERON_PUB_CHANNEL
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: PUB_TO_OME } }
+            - name: AERON_SUB_CHANNEL
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: SUB_LISTEN_ME } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ome
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ome
+  template:
+    metadata:
+      labels:
+        app: ome
+    spec:
+      volumes:
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 256Mi }
+      containers:
+        - name: ome
+          image: exchange-engine-ome:v-pure-final
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+          env:
+            - name: MAIN_CLASS
+              value: "com.exchange.OmeServerKt"
+            - name: ARGS
+              value: "--embedded-driver"
+            - name: AERON_PUB_CHANNEL
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: PUB_TO_ME } }
+            - name: AERON_SUB_CHANNEL
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: SUB_LISTEN_OME } }
+        - name: persistence-worker
+          image: exchange-engine-persistence-worker:v-pure-final
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+          env:
+            - name: MAIN_CLASS
+              value: "com.exchange.PersistenceWorkerKt"
+            - name: ARGS
+              value: ""
+            - name: DB_HOST
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: DB_HOST } }
+            - name: AERON_PUB_CHANNEL
+              value: "aeron:udp?endpoint=localhost:40123"
+            - name: AERON_SUB_CHANNEL
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: SUB_LISTEN_OME } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      volumes:
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 256Mi }
+      containers:
+        - name: gateway
+          image: exchange-engine-gateway:v-pure-final
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+          env:
+            - name: MAIN_CLASS
+              value: "com.exchange.GatewayServerKt"
+            - name: ARGS
+              value: "--embedded-driver"
+            - name: AERON_PUB_CHANNEL
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: PUB_TO_OME } }
+            - name: AERON_SUB_CHANNEL
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: SUB_LISTEN_ME } }

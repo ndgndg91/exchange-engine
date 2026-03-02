@@ -92,6 +92,28 @@ class OrderBook(val symbolId: Int) {
         noinline onMatch: (Long, Long, Long, Long, Long, Long) -> Unit,
         priceCheck: (Long, Long) -> Boolean
     ) {
+        // FOK Pre-check: Verify if total liquidity is enough for full fill
+        if (taker.tif == TimeInForce.FOK) {
+            var availableQty = 0L
+            val sortedPrices = opposingBook.keySet().toSortedList()
+            if (taker.side != Side.Buy) sortedPrices.reverseThis()
+            
+            val priceIter = sortedPrices.longIterator()
+            while (priceIter.hasNext()) {
+                val price = priceIter.next()
+                if (taker.type != OrderType.Market && !priceCheck(price, taker.price)) break
+                
+                opposingBook.get(price).forEach { availableQty += it.qty }
+                if (availableQty >= taker.qty) break
+            }
+            
+            if (availableQty < taker.qty) {
+                // Cannot fill entirely, "Kill" the order
+                taker.qty = 0 
+                return
+            }
+        }
+
         val sortedPrices = opposingBook.keySet().toSortedList()
         if (taker.side != Side.Buy) {
             sortedPrices.reverseThis()
@@ -137,9 +159,9 @@ class OrderBook(val symbolId: Int) {
             }
         }
 
-        // Rest in book (Maker) - ONLY if Limit Order AND NOT IOC
+        // Rest in book (Maker) - ONLY if Limit Order AND NOT IOC / FOK
         // Market Order = IOC behavior
-        if (taker.qty > 0 && taker.type != OrderType.Market && taker.tif != TimeInForce.IOC) {
+        if (taker.qty > 0 && taker.type != OrderType.Market && taker.tif != TimeInForce.IOC && taker.tif != TimeInForce.FOK) {
             val bookOrder = borrowOrder()
             bookOrder.set(taker.orderId, taker.userId, taker.price, taker.qty, taker.side, taker.type, 0, taker.tif)
             

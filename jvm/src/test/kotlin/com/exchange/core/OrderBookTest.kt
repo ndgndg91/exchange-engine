@@ -3,6 +3,7 @@ package com.exchange.core
 import com.exchange.model.Order
 import com.exchange.sbe.Side
 import com.exchange.sbe.OrderType
+import com.exchange.sbe.TimeInForce
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
@@ -77,5 +78,42 @@ class OrderBookTest {
         // Book should be empty
         assertEquals(0L, orderBook.getBestAsk())
         assertEquals(0L, orderBook.getBestBid())
+    }
+
+    @Test
+    fun `FOK order should fill entirely if liquidity is sufficient`() {
+        // 1. Maker Sell Orders: Total 100 @ 50000
+        orderBook.processOrder(createOrder(1, 101, 50000, 60, Side.Sell)) { _, _, _, _, _, _ -> }
+        orderBook.processOrder(createOrder(2, 102, 50000, 40, Side.Sell)) { _, _, _, _, _, _ -> }
+
+        // 2. FOK Buy Order: 100 @ 50000
+        val fokBuy = Order().apply { set(3, 103, 50000, 100, Side.Buy, OrderType.Limit, 0, TimeInForce.FOK) }
+        var matchCount = 0
+        orderBook.processOrder(fokBuy) { _, _, _, _, _, qty ->
+            matchCount++
+        }
+
+        // Expected: Fully matched (2 makers)
+        assertEquals(2, matchCount)
+        assertEquals(0L, fokBuy.qty)
+        assertEquals(0L, orderBook.getBestAsk())
+    }
+
+    @Test
+    fun `FOK order should be killed if liquidity is insufficient`() {
+        // 1. Maker Sell Order: 90 @ 50000
+        orderBook.processOrder(createOrder(1, 101, 50000, 90, Side.Sell)) { _, _, _, _, _, _ -> }
+
+        // 2. FOK Buy Order: 100 @ 50000 (Needs 100, but only 90 available)
+        val fokBuy = Order().apply { set(2, 102, 50000, 100, Side.Buy, OrderType.Limit, 0, TimeInForce.FOK) }
+        var matchedQty = 0L
+        orderBook.processOrder(fokBuy) { _, _, _, _, _, qty ->
+            matchedQty += qty
+        }
+
+        // Expected: Killed (No matches, maker order remains)
+        assertEquals(0L, matchedQty)
+        assertEquals(50000L, orderBook.getBestAsk()) // Maker still there
+        assertEquals(0L, orderBook.getBestBid())   // Taker not added to book
     }
 }

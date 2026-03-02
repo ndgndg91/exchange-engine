@@ -17,6 +17,7 @@ class OrderEvent {
     var orderType: OrderType = OrderType.NULL_VAL
     var triggerPrice: Long = 0
     var tif: TimeInForce = TimeInForce.GTC
+    var seqId: Long = 0
     
     fun clear() {
         type = 0
@@ -29,6 +30,7 @@ class OrderEvent {
         orderType = OrderType.NULL_VAL
         triggerPrice = 0
         tif = TimeInForce.GTC
+        seqId = 0
     }
 }
 

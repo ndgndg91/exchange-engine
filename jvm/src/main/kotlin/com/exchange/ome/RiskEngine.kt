@@ -6,6 +6,8 @@ import org.eclipse.collections.impl.map.mutable.primitive.LongObjectHashMap
 
 class RiskEngine {
     private val accounts = LongObjectHashMap<Account>()
+    // Tracking last processed seqId per user for idempotency
+    private val lastProcessedSeqId = org.eclipse.collections.impl.map.mutable.primitive.LongLongHashMap()
 
     fun getAccount(userId: Long): Account {
         var account = accounts.get(userId)
@@ -19,17 +21,19 @@ class RiskEngine {
     /**
      * Pre-trade Risk Check (New Order)
      * Returns true if valid and funds locked.
-     * Returns false if insufficient funds.
+     * Returns false if insufficient funds or duplicate request.
      */
-    fun preCheckOrder(userId: Long, symbolId: Int, side: Side, price: Long, qty: Long): Boolean {
+    fun preCheckOrder(userId: Long, symbolId: Int, side: Side, price: Long, qty: Long, seqId: Long): Boolean {
+        // Idempotency check: If seqId is already processed for this user, reject.
+        if (lastProcessedSeqId.containsKey(userId) && lastProcessedSeqId.get(userId) >= seqId) {
+            println("Idempotency Block: User $userId already processed seqId $seqId (Last=${lastProcessedSeqId.get(userId)})")
+            return false
+        }
+
         val account = getAccount(userId)
         
         // Simplified currency mapping for prototype:
         // Symbol 1 (BTC/USDT): Base=BTC(1), Quote=USDT(2)
-        // Check SPEC or define convention. Assuming:
-        // Side.Buy -> Need USDT (Quote Currency) -> Currency 2
-        // Side.Sell -> Need BTC (Base Currency) -> Currency 1
-        
         val currencyId = if (side == Side.Buy) 2 else 1
         val requiredAmount = if (side == Side.Buy) (price * qty) / 100_000_000L else qty
         
@@ -38,6 +42,9 @@ class RiskEngine {
         if (balance.available >= requiredAmount) {
             balance.available -= requiredAmount
             balance.locked += requiredAmount
+            
+            // Mark as processed
+            lastProcessedSeqId.put(userId, seqId)
             return true
         }
         

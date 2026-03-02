@@ -1,6 +1,9 @@
 #!/bin/bash
 
 # Configuration
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR"
+
 JAR_PATH="jvm/build/libs/jvm-1.0-SNAPSHOT-all.jar"
 AERON_DIR="/tmp/aeron-local-test"
 export JAVA_HOME="/Library/Java/JavaVirtualMachines/amazon-corretto-21.jdk/Contents/Home"
@@ -9,6 +12,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 # Cleanup previous run
 echo "Cleaning up previous run..."
 rm -rf $AERON_DIR
+rm -rf ome-journal
 mkdir -p $AERON_DIR
 pkill -f "com.exchange.MatchingServerKt"
 pkill -f "com.exchange.OmeServerKt"

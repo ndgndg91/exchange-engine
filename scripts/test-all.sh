@@ -5,18 +5,20 @@ cd "$(dirname "$0")"
 
 function restart_engine() {
     echo "--------------------------------------------------"
-    echo ">>> Restarting Exchange Engine (Clean State)..."
+    echo ">>> Restarting Exchange Engine (Force Clean State)..."
     echo "--------------------------------------------------"
-    pkill -f "com.exchange"
-    # Wait for kill
+    pkill -9 -f "com.exchange"
     sleep 2
     
+    # DB Truncate
+    docker exec exchange-db psql -U postgres -d exchange -c "TRUNCATE balances, orders, trades, transfers;" > /dev/null 2>&1
+    
     # Start form root directory
-    (cd .. && ./run-local.sh > /dev/null 2>&1 &)
+    (cd .. && export JAVA_HOME="/Library/Java/JavaVirtualMachines/amazon-corretto-21.jdk/Contents/Home" && export PATH="$JAVA_HOME/bin:$PATH" && ./run-local.sh > startup.log 2>&1 &)
     
     # Wait for startup
-    echo "Waiting 5s for startup..."
-    sleep 5
+    echo "Waiting 15s for startup..."
+    sleep 15
 }
 
 # 1. Basic Scenario
@@ -43,6 +45,7 @@ echo ">>> [4/5] Running Cancel Order Test..."
 restart_engine
 echo ">>> [5/5] Running IOC Order Test..."
 ./test-ioc.sh
+./test-fok.sh
 
 echo "--------------------------------------------------"
 echo ">>> ALL TESTS COMPLETED."
