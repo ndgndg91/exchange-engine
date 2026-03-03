@@ -1,13 +1,16 @@
 use axum::{
-    routing::{post},
-    Json, Router,
+    extract::Query,
     response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
 };
-use serde::{Deserialize};
-use std::net::{SocketAddr, TcpStream};
+use common::{Order, OrderType, Side, SnapshotData, TimeInForce, ipc::OmeCommand};
+use serde::{Deserialize, Serialize};
 use std::io::Write;
-use common::{Order, Side, OrderType, ipc::OmeCommand};
+use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::env;
+use std::sync::{Arc, Mutex};
 
 static SEQ_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -18,6 +21,12 @@ struct OrderRequest {
     price: i64,
     qty: i64,
     side: u8,
+    #[serde(default)]
+    order_type: Option<u8>, // 1=Limit, 2=Market, 3=StopLimit, 4=StopMarket
+    #[serde(default)]
+    trigger_price: Option<i64>,
+    #[serde(default)]
+    tif: Option<u8>, // 0=GTC, 1=IOC, 2=FOK
 }
 
 #[derive(Deserialize)]
@@ -27,25 +36,81 @@ struct DepositRequest {
     amount: i64,
 }
 
+#[derive(Deserialize)]
+struct CancelRequest {
+    user_id: u64,
+    order_id: u64,
+    symbol_id: i32,
+}
+
+#[derive(Deserialize)]
+struct OrderBookQuery {
+    #[serde(default = "default_symbol")]
+    symbol_id: i32,
+}
+
+fn default_symbol() -> i32 {
+    1
+}
+
+#[derive(Serialize)]
+struct OrderBookResponse {
+    symbol_id: i32,
+    bids: Vec<[i64; 2]>,
+    asks: Vec<[i64; 2]>,
+}
+
+/// Shared state for cached orderbook snapshot
+struct AppState {
+    snapshot: Mutex<SnapshotData>,
+}
+
 #[tokio::main]
 async fn main() {
-    println!("Starting Rust Gateway (Axum)...");
+    eprintln!("Starting Rust Gateway (Axum)...");
+
+    let state = Arc::new(AppState {
+        snapshot: Mutex::new(SnapshotData {
+            bids: vec![],
+            asks: vec![],
+        }),
+    });
 
     let app = Router::new()
         .route("/order", post(handle_order))
-        .route("/deposit", post(handle_deposit));
+        .route("/deposit", post(handle_deposit))
+        .route("/cancel", post(handle_cancel))
+        .route("/orderbook", get(handle_orderbook))
+        .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
-    println!("Listening on {}", addr);
-    
+    eprintln!("Listening on {}", addr);
+
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
 async fn handle_order(Json(payload): Json<OrderRequest>) -> impl IntoResponse {
     let order_id = SEQ_ID.fetch_add(1, Ordering::SeqCst);
-    let side = if payload.side == 1 { Side::Buy } else { Side::Sell };
-    
+    let side = if payload.side == 1 {
+        Side::Buy
+    } else {
+        Side::Sell
+    };
+
+    let order_type = match payload.order_type.unwrap_or(1) {
+        2 => OrderType::Market,
+        3 => OrderType::StopLimit,
+        4 => OrderType::StopMarket,
+        _ => OrderType::Limit,
+    };
+
+    let tif = match payload.tif.unwrap_or(0) {
+        1 => TimeInForce::IOC,
+        2 => TimeInForce::FOK,
+        _ => TimeInForce::GTC,
+    };
+
     let cmd = OmeCommand::Order(Order {
         order_id,
         user_id: payload.user_id,
@@ -54,7 +119,9 @@ async fn handle_order(Json(payload): Json<OrderRequest>) -> impl IntoResponse {
         qty: payload.qty,
         side,
         timestamp: 0,
-        order_type: OrderType::Limit,
+        order_type,
+        time_in_force: tif,
+        trigger_price: payload.trigger_price.unwrap_or(0),
     });
 
     send_to_ome(cmd);
@@ -63,7 +130,7 @@ async fn handle_order(Json(payload): Json<OrderRequest>) -> impl IntoResponse {
 
 async fn handle_deposit(Json(payload): Json<DepositRequest>) -> impl IntoResponse {
     let seq_id = SEQ_ID.fetch_add(1, Ordering::SeqCst);
-    
+
     let cmd = OmeCommand::Deposit {
         user_id: payload.user_id,
         currency_id: payload.currency_id,
@@ -75,8 +142,36 @@ async fn handle_deposit(Json(payload): Json<DepositRequest>) -> impl IntoRespons
     format!("Deposit Sent: {}", seq_id)
 }
 
+async fn handle_cancel(Json(payload): Json<CancelRequest>) -> impl IntoResponse {
+    let seq_id = SEQ_ID.fetch_add(1, Ordering::SeqCst);
+
+    let cmd = OmeCommand::Cancel {
+        user_id: payload.user_id,
+        order_id: payload.order_id,
+        symbol_id: payload.symbol_id,
+        seq_id,
+    };
+
+    send_to_ome(cmd);
+    format!("Cancel Sent: {}", seq_id)
+}
+
+async fn handle_orderbook(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    Query(params): Query<OrderBookQuery>,
+) -> impl IntoResponse {
+    let snap = state.snapshot.lock().unwrap();
+    let resp = OrderBookResponse {
+        symbol_id: params.symbol_id,
+        bids: snap.bids.iter().map(|&(p, q)| [p, q]).collect(),
+        asks: snap.asks.iter().map(|&(p, q)| [p, q]).collect(),
+    };
+    Json(resp)
+}
+
 fn send_to_ome(cmd: OmeCommand) {
-    if let Ok(mut stream) = TcpStream::connect("127.0.0.1:5556") {
+    let ome_addr = env::var("OME_ADDR").unwrap_or_else(|_| "127.0.0.1:5556".into());
+    if let Ok(mut stream) = TcpStream::connect(&ome_addr) {
         let mut data = serde_json::to_vec(&cmd).unwrap();
         data.push(b'\n');
         let _ = stream.write_all(&data);

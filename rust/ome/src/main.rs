@@ -1,30 +1,125 @@
 mod risk_engine;
 
-use common::{Order, ipc::{PersistMessage, OmeCommand}};
+use common::ipc::{EngineResponse, OmeCommand, PersistMessage};
 use risk_engine::RiskEngine;
-use std::io::{Write, BufRead, BufReader};
+use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::env;
 use std::thread;
+use std::time::Duration;
+
+/// ME expects this tagged format for commands
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "cmd")]
+enum MeCommand {
+    NewOrder(common::Order),
+    CancelOrder {
+        order_id: u64,
+        user_id: u64,
+        symbol_id: i32,
+    },
+}
+
+fn send_json<T: Serialize>(stream: &mut TcpStream, msg: &T) {
+    let mut data = serde_json::to_vec(msg).unwrap();
+    data.push(b'\n');
+    let _ = stream.write_all(&data);
+    let _ = stream.flush();
+}
 
 fn main() {
-    println!("Starting Rust OME Server...");
+    eprintln!("Starting Rust OME Server...");
 
-    let mut risk_engine = RiskEngine::new();
+    let me_addr = env::var("ME_ADDR").unwrap_or_else(|_| "127.0.0.1:5555".into());
+    let persistence_addr = env::var("PERSISTENCE_ADDR").unwrap_or_else(|_| "127.0.0.1:5557".into());
+    let ome_feedback_listen = env::var("OME_FEEDBACK_LISTEN").unwrap_or_else(|_| "0.0.0.0:5558".into());
+    let ome_listen_addr = env::var("OME_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:5556".into());
 
-    // 1. Established Persistent Connections
+    let risk_engine = Arc::new(Mutex::new(RiskEngine::new()));
+
+    // 1. Connect to ME
     let mut me_stream = loop {
-        if let Ok(s) = TcpStream::connect("127.0.0.1:5555") { break s; }
-        println!("OME: Waiting for ME..."); thread::sleep(Duration::from_secs(1));
-    };
-    
-    let mut db_stream = loop {
-        if let Ok(s) = TcpStream::connect("127.0.0.1:5557") { break s; }
-        println!("OME: Waiting for Persistence..."); thread::sleep(Duration::from_secs(1));
+        if let Ok(s) = TcpStream::connect(&me_addr) {
+            break s;
+        }
+        eprintln!("OME: Waiting for ME...");
+        thread::sleep(Duration::from_secs(1));
     };
 
-    let listener = TcpListener::bind("127.0.0.1:5556").expect("Failed to bind OME port");
-    println!("OME Listening for requests on 127.0.0.1:5556");
+    // 2. Connect to Persistence
+    let mut db_stream = loop {
+        if let Ok(s) = TcpStream::connect(&persistence_addr) {
+            break s;
+        }
+        eprintln!("OME: Waiting for Persistence...");
+        thread::sleep(Duration::from_secs(1));
+    };
+
+    // 3. Start ME feedback listener (reverse TCP - ME connects to us on 5558)
+    let feedback_risk = Arc::clone(&risk_engine);
+    thread::spawn(move || {
+        let feedback_listener =
+            TcpListener::bind(&ome_feedback_listen).expect("Failed to bind OME feedback port");
+        eprintln!("OME: Feedback listener on {}", ome_feedback_listen);
+
+        for stream in feedback_listener.incoming() {
+            if let Ok(s) = stream {
+                eprintln!("OME: ME feedback connection established.");
+                let risk = Arc::clone(&feedback_risk);
+                thread::spawn(move || {
+                    let reader = BufReader::new(s);
+                    for line in reader.lines() {
+                        if let Ok(l) = line {
+                            if let Ok(resp) = serde_json::from_str::<EngineResponse>(&l) {
+                                let mut re = risk.lock().unwrap();
+                                match resp {
+                                    EngineResponse::TradeExecuted {
+                                        maker_user_id,
+                                        taker_user_id,
+                                        side,
+                                        price,
+                                        qty,
+                                        ..
+                                    } => {
+                                        re.on_trade(
+                                            maker_user_id,
+                                            taker_user_id,
+                                            side,
+                                            price,
+                                            qty,
+                                        );
+                                        eprintln!(
+                                            "OME: Trade settled - maker={} taker={} price={} qty={}",
+                                            maker_user_id, taker_user_id, price, qty
+                                        );
+                                    }
+                                    EngineResponse::OrderCancelled {
+                                        user_id,
+                                        side,
+                                        price,
+                                        leaves_qty,
+                                        order_id,
+                                    } => {
+                                        re.on_cancel(user_id, side, price, leaves_qty);
+                                        eprintln!(
+                                            "OME: Cancel settled - order={} user={} unlocked qty={}",
+                                            order_id, user_id, leaves_qty
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    });
+
+    // 4. Main listener for Gateway commands
+    let listener = TcpListener::bind(&ome_listen_addr).expect("Failed to bind OME port");
+    eprintln!("OME Listening for requests on {}", ome_listen_addr);
 
     for stream in listener.incoming() {
         if let Ok(s) = stream {
@@ -32,29 +127,75 @@ fn main() {
             for line in reader.lines() {
                 if let Ok(l) = line {
                     if let Ok(cmd) = serde_json::from_str::<OmeCommand>(&l) {
+                        let mut re = risk_engine.lock().unwrap();
                         match cmd {
                             OmeCommand::Order(order) => {
-                                if risk_engine.pre_check_order(order.user_id, order.side, order.price, order.qty) {
-                                    // Forward using persistent streams
-                                    let mut data = serde_json::to_vec(&order).unwrap();
-                                    data.push(b'\n');
-                                    let _ = me_stream.write_all(&data);
-                                    let _ = me_stream.flush();
+                                if re.pre_check_order(
+                                    order.user_id,
+                                    order.side,
+                                    order.price,
+                                    order.qty,
+                                ) {
+                                    drop(re); // Release lock before I/O
 
-                                    let msg = PersistMessage::NewOrder(order);
-                                    let mut p_data = serde_json::to_vec(&msg).unwrap();
-                                    p_data.push(b'\n');
-                                    let _ = db_stream.write_all(&p_data);
-                                    let _ = db_stream.flush();
+                                    // Forward to ME with tagged command format
+                                    send_json(
+                                        &mut me_stream,
+                                        &MeCommand::NewOrder(order.clone()),
+                                    );
+
+                                    // Forward to Persistence
+                                    send_json(
+                                        &mut db_stream,
+                                        &PersistMessage::NewOrder(order),
+                                    );
+                                } else {
+                                    eprintln!(
+                                        "OME: Risk check failed for order #{} user={}",
+                                        order.order_id, order.user_id
+                                    );
                                 }
-                            },
-                            OmeCommand::Deposit { user_id, currency_id, amount, seq_id } => {
-                                risk_engine.deposit(user_id, currency_id, amount);
-                                let msg = PersistMessage::Deposit { user_id, currency_id, amount, seq_id };
-                                let mut p_data = serde_json::to_vec(&msg).unwrap();
-                                p_data.push(b'\n');
-                                let _ = db_stream.write_all(&p_data);
-                                let _ = db_stream.flush();
+                            }
+                            OmeCommand::Deposit {
+                                user_id,
+                                currency_id,
+                                amount,
+                                seq_id,
+                            } => {
+                                re.deposit(user_id, currency_id, amount);
+                                drop(re);
+
+                                send_json(
+                                    &mut db_stream,
+                                    &PersistMessage::Deposit {
+                                        user_id,
+                                        currency_id,
+                                        amount,
+                                        seq_id,
+                                    },
+                                );
+                            }
+                            OmeCommand::Cancel {
+                                user_id,
+                                order_id,
+                                symbol_id,
+                                seq_id: _,
+                            } => {
+                                drop(re); // Balance unlock will happen via feedback
+
+                                // Forward cancel to ME
+                                send_json(
+                                    &mut me_stream,
+                                    &MeCommand::CancelOrder {
+                                        order_id,
+                                        user_id,
+                                        symbol_id,
+                                    },
+                                );
+                                eprintln!(
+                                    "OME: Cancel forwarded to ME - order={} user={}",
+                                    order_id, user_id
+                                );
                             }
                         }
                     }

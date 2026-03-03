@@ -26,6 +26,7 @@ pub enum TimeInForce {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct Order {
     pub order_id: u64,
     pub user_id: u64,
@@ -35,6 +36,8 @@ pub struct Order {
     pub side: Side,
     pub timestamp: i64,
     pub order_type: OrderType,
+    pub time_in_force: TimeInForce,
+    pub trigger_price: i64,
 }
 
 pub mod model {
@@ -43,6 +46,21 @@ pub mod model {
         pub available: i64,
         pub locked: i64,
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SnapshotData {
+    pub bids: Vec<(i64, i64)>, // (price, total_qty)
+    pub asks: Vec<(i64, i64)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CancelledOrder {
+    pub order_id: u64,
+    pub user_id: u64,
+    pub price: i64,
+    pub leaves_qty: i64,
+    pub side: Side,
 }
 
 pub mod ipc;

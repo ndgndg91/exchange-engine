@@ -10,7 +10,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: pass
     volumes:
-      - ./jvm/src/main/resources/db-schema.sql:/docker-entrypoint-initdb.d/init.sql
+      - ../../jvm/src/main/resources/db-schema.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
       - "5432:5432"
     healthcheck:
@@ -21,7 +21,9 @@ services:
 
   # Dedicated Aeron Media Driver (The only one running as a driver)
   media-driver:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.jvm
     container_name: media-driver
     shm_size: '512mb'
     volumes:
@@ -33,7 +35,9 @@ services:
         condition: service_healthy
 
   matching-engine:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.jvm
     container_name: matching-engine
     shm_size: '512mb'
     volumes:
@@ -49,7 +53,9 @@ services:
         condition: service_healthy
 
   ome:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.jvm
     container_name: ome
     shm_size: '512mb'
     volumes:
@@ -65,7 +71,9 @@ services:
         condition: service_started
 
   persistence-worker:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.jvm
     container_name: persistence-worker
     shm_size: '512mb'
     volumes:
@@ -82,7 +90,9 @@ services:
         condition: service_healthy
 
   gateway:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.jvm
     container_name: gateway
     shm_size: '512mb'
     ports:

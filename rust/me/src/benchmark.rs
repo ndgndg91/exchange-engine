@@ -1,6 +1,6 @@
 mod order_book;
 
-use common::{Order, Side, OrderType};
+use common::{Order, Side, OrderType, TimeInForce};
 use order_book::OrderBook;
 use std::time::Instant;
 
@@ -25,6 +25,8 @@ fn main() {
             side,
             timestamp: 0,
             order_type: OrderType::Limit,
+            time_in_force: TimeInForce::GTC,
+            trigger_price: 0,
         };
 
         order_book.process_order(order);

@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  exchange-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: exchange
+    ports:
+      - "5432:5432"
+    volumes:
+      - ../../scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  persistence:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.rust
+    entrypoint: ["persistence"]
+    environment:
+      DATABASE_URL: "postgres://postgres:pass@exchange-db:5432/exchange"
+    ports:
+      - "5557:5557"
+    depends_on:
+      exchange-db:
+        condition: service_healthy
+
+  matching-engine:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.rust
+    entrypoint: ["me"]
+    environment:
+      PERSISTENCE_ADDR: "persistence:5557"
+      OME_FEEDBACK_ADDR: "ome:5558"
+    ports:
+      - "5555:5555"
+    depends_on:
+      - persistence
+
+  ome:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.rust
+    entrypoint: ["ome"]
+    environment:
+      ME_ADDR: "matching-engine:5555"
+      PERSISTENCE_ADDR: "persistence:5557"
+    ports:
+      - "5556:5556"
+      - "5558:5558"
+    depends_on:
+      - matching-engine
+      - persistence
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.rust
+    entrypoint: ["gateway"]
+    environment:
+      OME_ADDR: "ome:5556"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - ome
