@@ -38,8 +38,10 @@ services:
     environment:
       PERSISTENCE_ADDR: "persistence:5557"
       OME_FEEDBACK_ADDR: "ome:5558"
+      ME_SNAPSHOT_LISTEN: "0.0.0.0:5559"
     ports:
       - "5555:5555"
+      - "5559:5559"
     depends_on:
       - persistence
 
@@ -65,6 +67,7 @@ services:
     entrypoint: ["gateway"]
     environment:
       OME_ADDR: "ome:5556"
+      ME_SNAPSHOT_ADDR: "matching-engine:5559"
     ports:
       - "8080:8080"
     depends_on:

@@ -36,16 +36,15 @@ echo "[6/9] Updating manifests with new tag $V..."
 sed -i '' "s/image: exchange-engine-matching-engine:.*/image: exchange-engine-matching-engine:$V/g" deploy/k8s/jvm/apps.yaml
 sed -i '' "s/image: exchange-engine-ome:.*/image: exchange-engine-ome:$V/g" deploy/k8s/jvm/apps.yaml
 sed -i '' "s/image: exchange-engine-gateway:.*/image: exchange-engine-gateway:$V/g" deploy/k8s/jvm/apps.yaml
-sed -i '' "s/image: exchange-engine-persistence-worker:.*/image: exchange-engine-persistence-worker:$V/g" deploy/k8s/jvm/worker.yaml
+sed -i '' "s/image: exchange-engine-persistence-worker:.*/image: exchange-engine-persistence-worker:$V/g" deploy/k8s/jvm/apps.yaml
 
 echo "[7/9] Deploying and waiting for Pods..."
 kubectl apply -f deploy/k8s/base/db.yaml
 kubectl apply -f deploy/k8s/jvm/services.yaml
 kubectl apply -f deploy/k8s/jvm/apps.yaml
-kubectl apply -f deploy/k8s/jvm/worker.yaml
 
 echo "Waiting for pods to be created and READY..."
-for app in exchange-db matching-engine ome gateway persistence-worker; do
+for app in exchange-db matching-engine ome gateway; do
     echo " > Waiting for $app..."
     # Loop until the pod is found AND ready
     until kubectl wait --for=condition=ready pod -l app=$app --timeout=5s 2>/dev/null; do

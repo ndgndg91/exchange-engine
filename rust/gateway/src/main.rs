@@ -4,13 +4,15 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use common::{Order, OrderType, Side, SnapshotData, TimeInForce, ipc::OmeCommand};
+use common::{Order, OrderType, Side, SnapshotData, TimeInForce, ipc::{EngineResponse, OmeCommand}};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::env;
 use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::time::Duration;
 
 static SEQ_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -76,6 +78,12 @@ async fn main() {
         }),
     });
 
+    // Start background task to receive snapshots from ME
+    let snapshot_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        snapshot_receiver(snapshot_state).await;
+    });
+
     let app = Router::new()
         .route("/order", post(handle_order))
         .route("/deposit", post(handle_deposit))
@@ -88,6 +96,37 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+/// Background task: connect to ME snapshot port and update AppState
+async fn snapshot_receiver(state: Arc<AppState>) {
+    let snapshot_addr = env::var("ME_SNAPSHOT_ADDR").unwrap_or_else(|_| "127.0.0.1:5559".into());
+
+    loop {
+        match tokio::net::TcpStream::connect(&snapshot_addr).await {
+            Ok(stream) => {
+                eprintln!("Gateway: Connected to ME snapshot stream at {}", snapshot_addr);
+                let reader = BufReader::new(stream);
+                let mut lines = reader.lines();
+
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if let Ok(resp) = serde_json::from_str::<EngineResponse>(&line) {
+                        if let EngineResponse::OrderBookSnapshot { symbol_id: _, bids, asks } = resp {
+                            let mut snap = state.snapshot.lock().unwrap();
+                            snap.bids = bids;
+                            snap.asks = asks;
+                        }
+                    }
+                }
+
+                eprintln!("Gateway: ME snapshot stream disconnected, reconnecting...");
+            }
+            Err(_) => {
+                eprintln!("Gateway: Waiting for ME snapshot stream at {}...", snapshot_addr);
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
 }
 
 async fn handle_order(Json(payload): Json<OrderRequest>) -> impl IntoResponse {

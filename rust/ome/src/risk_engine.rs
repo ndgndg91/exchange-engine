@@ -5,11 +5,15 @@ const BTC_SCALE: i64 = 100_000_000;
 
 pub struct RiskEngine {
     accounts: HashMap<u64, HashMap<i32, Balance>>,
+    last_processed_seq_id: u64,
 }
 
 impl RiskEngine {
     pub fn new() -> Self {
-        Self { accounts: HashMap::new() }
+        Self {
+            accounts: HashMap::new(),
+            last_processed_seq_id: 0,
+        }
     }
 
     pub fn deposit(&mut self, user_id: u64, currency_id: i32, amount: i64) {
@@ -18,7 +22,13 @@ impl RiskEngine {
         balance.available += amount;
     }
 
-    pub fn pre_check_order(&mut self, user_id: u64, side: Side, price: i64, qty: i64) -> bool {
+    pub fn pre_check_order(&mut self, user_id: u64, side: Side, price: i64, qty: i64, seq_id: u64) -> bool {
+        // Idempotency: reject already-processed sequence IDs
+        if seq_id != 0 && seq_id <= self.last_processed_seq_id {
+            eprintln!("RiskEngine: Duplicate seq_id={} (last={}), rejected", seq_id, self.last_processed_seq_id);
+            return false;
+        }
+
         let currency_id = if side == Side::Buy { 2 } else { 1 };
         let required_amount = if side == Side::Buy {
             (price * qty) / BTC_SCALE
@@ -31,6 +41,9 @@ impl RiskEngine {
                 if balance.available >= required_amount {
                     balance.available -= required_amount;
                     balance.locked += required_amount;
+                    if seq_id != 0 {
+                        self.last_processed_seq_id = seq_id;
+                    }
                     return true;
                 }
             }
@@ -109,7 +122,7 @@ mod tests {
         let mut engine = RiskEngine::new();
         engine.deposit(1, 2, 1_000_000); // 1M KRW
 
-        let passed = engine.pre_check_order(1, Side::Buy, 50_000, 100_000_000); // Buy 1 BTC @ 50000
+        let passed = engine.pre_check_order(1, Side::Buy, 50_000, 100_000_000, 1); // Buy 1 BTC @ 50000
         assert!(passed);
 
         let bal = engine.get_balance(1, 2).unwrap();
@@ -122,7 +135,7 @@ mod tests {
         let mut engine = RiskEngine::new();
         engine.deposit(1, 2, 10_000); // Only 10K KRW
 
-        let passed = engine.pre_check_order(1, Side::Buy, 50_000, 100_000_000); // Need 50K
+        let passed = engine.pre_check_order(1, Side::Buy, 50_000, 100_000_000, 1); // Need 50K
         assert!(!passed);
 
         let bal = engine.get_balance(1, 2).unwrap();
@@ -135,11 +148,11 @@ mod tests {
         let mut engine = RiskEngine::new();
         // Maker (user 1): deposits 1 BTC, sells 0.5 BTC @ 50000
         engine.deposit(1, 1, 100_000_000); // 1 BTC
-        engine.pre_check_order(1, Side::Sell, 50_000, 50_000_000); // Lock 0.5 BTC
+        engine.pre_check_order(1, Side::Sell, 50_000, 50_000_000, 1); // Lock 0.5 BTC
 
         // Taker (user 2): deposits 100K KRW, buys 0.5 BTC @ 50000
         engine.deposit(2, 2, 100_000); // 100K KRW
-        engine.pre_check_order(2, Side::Buy, 50_000, 50_000_000); // Lock 25K KRW
+        engine.pre_check_order(2, Side::Buy, 50_000, 50_000_000, 2); // Lock 25K KRW
 
         // Trade: 0.5 BTC @ 50000 -> cost = (50000 * 50000000) / 100000000 = 25000
         engine.on_trade(1, 2, Side::Buy, 50_000, 50_000_000);
@@ -165,7 +178,7 @@ mod tests {
     fn should_unlock_balance_on_cancel() {
         let mut engine = RiskEngine::new();
         engine.deposit(1, 2, 100_000); // 100K KRW
-        engine.pre_check_order(1, Side::Buy, 50_000, 50_000_000); // Lock 25K
+        engine.pre_check_order(1, Side::Buy, 50_000, 50_000_000, 1); // Lock 25K
 
         let bal = engine.get_balance(1, 2).unwrap();
         assert_eq!(bal.available, 75_000);
@@ -177,5 +190,41 @@ mod tests {
         let bal = engine.get_balance(1, 2).unwrap();
         assert_eq!(bal.available, 100_000); // Fully restored
         assert_eq!(bal.locked, 0);
+    }
+
+    #[test]
+    fn should_reject_duplicate_seq_id() {
+        let mut engine = RiskEngine::new();
+        engine.deposit(1, 2, 1_000_000); // 1M KRW
+
+        // First order with seq_id=1 should pass
+        let passed = engine.pre_check_order(1, Side::Buy, 50_000, 100_000_000, 1);
+        assert!(passed);
+
+        // Same seq_id=1 should be rejected (idempotency)
+        let duplicate = engine.pre_check_order(1, Side::Buy, 50_000, 100_000_000, 1);
+        assert!(!duplicate);
+
+        // Balance should only reflect the first order
+        let bal = engine.get_balance(1, 2).unwrap();
+        assert_eq!(bal.available, 950_000);
+        assert_eq!(bal.locked, 50_000);
+    }
+
+    #[test]
+    fn should_accept_increasing_seq_ids() {
+        let mut engine = RiskEngine::new();
+        engine.deposit(1, 2, 1_000_000); // 1M KRW
+
+        assert!(engine.pre_check_order(1, Side::Buy, 10_000, 100_000_000, 1)); // Lock 10K
+        assert!(engine.pre_check_order(1, Side::Buy, 10_000, 100_000_000, 2)); // Lock 10K
+        assert!(engine.pre_check_order(1, Side::Buy, 10_000, 100_000_000, 5)); // Lock 10K (skip OK)
+
+        // seq_id=3 is lower than last processed (5), should be rejected
+        assert!(!engine.pre_check_order(1, Side::Buy, 10_000, 100_000_000, 3));
+
+        let bal = engine.get_balance(1, 2).unwrap();
+        assert_eq!(bal.available, 970_000); // 1M - 30K (3 orders * 10K)
+        assert_eq!(bal.locked, 30_000);
     }
 }

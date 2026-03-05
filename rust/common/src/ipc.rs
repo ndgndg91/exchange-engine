@@ -67,4 +67,9 @@ pub enum EngineResponse {
         price: i64,
         leaves_qty: i64,
     },
+    OrderBookSnapshot {
+        symbol_id: i32,
+        bids: Vec<(i64, i64)>,
+        asks: Vec<(i64, i64)>,
+    },
 }

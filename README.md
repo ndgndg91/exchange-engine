@@ -47,6 +47,9 @@ deploy/
 | **Database** | JDBC / HikariCP | SQLx (Async) |
 | **Order Types** | Limit, Market, StopLimit, StopMarket | Limit, Market, StopLimit, StopMarket |
 | **TIF** | GTC, IOC, FOK | GTC, IOC, FOK |
+| **Event Journal** | Chronicle Queue (WAL) | File-based JSONL (WAL) |
+| **Idempotency** | lastProcessedSeqId | last_processed_seq_id |
+| **OrderBook Snapshot** | Aeron broadcast | TCP broadcast (port 5559) |
 
 ---
 

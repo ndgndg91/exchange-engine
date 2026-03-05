@@ -78,11 +78,14 @@ spec:
           command: ["me"]
           ports:
             - containerPort: 5555
+            - containerPort: 5559
           env:
             - name: PERSISTENCE_ADDR
               value: "rust-persistence:5557"
             - name: OME_FEEDBACK_ADDR
               value: "rust-ome:5558"
+            - name: ME_SNAPSHOT_LISTEN
+              value: "0.0.0.0:5559"
           resources:
             requests:
               cpu: 200m
@@ -97,8 +100,12 @@ metadata:
   name: rust-matching-engine
 spec:
   ports:
-    - port: 5555
+    - name: command
+      port: 5555
       targetPort: 5555
+    - name: snapshot
+      port: 5559
+      targetPort: 5559
   selector:
     app: rust-matching-engine
 
@@ -180,6 +187,9 @@ spec:
         - name: wait-ome
           image: busybox:1.36
           command: ['sh', '-c', 'until nc -z rust-ome 5556; do sleep 1; done']
+        - name: wait-me-snapshot
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z rust-matching-engine 5559; do sleep 1; done']
       containers:
         - name: gateway
           image: exchange-engine-rust:latest
@@ -189,6 +199,8 @@ spec:
           env:
             - name: OME_ADDR
               value: "rust-ome:5556"
+            - name: ME_SNAPSHOT_ADDR
+              value: "rust-matching-engine:5559"
           resources:
             requests:
               cpu: 100m

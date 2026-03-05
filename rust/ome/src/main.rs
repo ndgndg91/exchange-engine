@@ -1,6 +1,8 @@
+mod journal;
 mod risk_engine;
 
 use common::ipc::{EngineResponse, OmeCommand, PersistMessage};
+use journal::EventJournal;
 use risk_engine::RiskEngine;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
@@ -36,6 +38,9 @@ fn main() {
     let persistence_addr = env::var("PERSISTENCE_ADDR").unwrap_or_else(|_| "127.0.0.1:5557".into());
     let ome_feedback_listen = env::var("OME_FEEDBACK_LISTEN").unwrap_or_else(|_| "0.0.0.0:5558".into());
     let ome_listen_addr = env::var("OME_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:5556".into());
+
+    let journal_path = env::var("JOURNAL_PATH").unwrap_or_else(|_| "/tmp/exchange-journal".into());
+    let mut journal = EventJournal::new(&journal_path);
 
     let risk_engine = Arc::new(Mutex::new(RiskEngine::new()));
 
@@ -108,6 +113,9 @@ fn main() {
                                             order_id, user_id, leaves_qty
                                         );
                                     }
+                                    EngineResponse::OrderBookSnapshot { .. } => {
+                                        // Snapshot messages are for Gateway, ignore in OME
+                                    }
                                 }
                             }
                         }
@@ -135,8 +143,12 @@ fn main() {
                                     order.side,
                                     order.price,
                                     order.qty,
+                                    order.order_id,
                                 ) {
                                     drop(re); // Release lock before I/O
+
+                                    // WAL: journal before forwarding to ME
+                                    journal.write(&OmeCommand::Order(order.clone()));
 
                                     // Forward to ME with tagged command format
                                     send_json(
@@ -162,6 +174,9 @@ fn main() {
                                 amount,
                                 seq_id,
                             } => {
+                                // WAL: journal before processing
+                                journal.write(&OmeCommand::Deposit { user_id, currency_id, amount, seq_id });
+
                                 re.deposit(user_id, currency_id, amount);
                                 drop(re);
 
@@ -179,8 +194,11 @@ fn main() {
                                 user_id,
                                 order_id,
                                 symbol_id,
-                                seq_id: _,
+                                seq_id,
                             } => {
+                                // WAL: journal before forwarding to ME
+                                journal.write(&OmeCommand::Cancel { user_id, order_id, symbol_id, seq_id });
+
                                 drop(re); // Balance unlock will happen via feedback
 
                                 // Forward cancel to ME

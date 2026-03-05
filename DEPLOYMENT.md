@@ -22,9 +22,8 @@ deploy/
     ├── base/                  # 공통 (DB, init SQL)
     │   └── db.yaml
     ├── jvm/                   # JVM (Aeron UDP)
-    │   ├── apps.yaml
-    │   ├── services.yaml
-    │   └── worker.yaml
+    │   ├── apps.yaml          # ME, OME(+persistence-worker sidecar), Gateway
+    │   └── services.yaml
     └── rust/                  # Rust (TCP JSON)
         └── apps.yaml
 ```
@@ -106,6 +105,7 @@ kubectl apply -f deploy/k8s/base/db.yaml
 kubectl apply -f deploy/k8s/rust/apps.yaml
 ```
 > Rust 버전은 Aeron/shared memory 없이 순수 TCP 통신만 사용하므로 배포가 더 간결합니다.
+> ME는 포트 5559에서 OrderBook 스냅샷을 broadcast하며, Gateway가 이를 구독하여 `/orderbook` API에 반영합니다.
 
 ### 5.3 포트포워딩 및 테스트
 ```bash
@@ -137,3 +137,6 @@ python3 scripts/simulate-market.py
 - **Aeron IPC** (JVM): 운영 환경에서는 전용 미디어 드라이버를 실행하고 메모리 맵 파일 경로(`/dev/shm`)를 공유해야 합니다.
 - **CPU Pinning**: 고성능 보장을 위해 매칭 엔진 스레드를 특정 코어에 격리하는 설정이 필요합니다.
 - **Scale Factor**: 상장된 코인마다 다른 Scale 값을 `currencies` 테이블에서 관리하며, 모든 엔진은 이를 동적으로 참조하도록 구성해야 합니다.
+- **이벤트 저널** (Rust): OME는 ME 전송 전에 JSONL 형식의 WAL(Write-Ahead Log)을 기록합니다. 저널 경로는 `JOURNAL_PATH` 환경변수로 설정합니다 (기본: `/tmp/exchange-journal`).
+- **멱등성**: 양쪽 구현 모두 seq_id 기반 중복 주문 방지 로직을 포함합니다 (JVM: `lastProcessedSeqId`, Rust: `last_processed_seq_id`).
+- **initContainers** (K8s): JVM/Rust 모두 DB(PostgreSQL 5432) 준비 대기를 위한 `busybox` initContainer를 사용합니다.

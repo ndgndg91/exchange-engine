@@ -9,6 +9,7 @@ use std::thread;
 use std::io::{Write, BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::env;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Commands received from OME via TCP
@@ -26,12 +27,24 @@ fn send_json<T: Serialize>(stream: &mut TcpStream, msg: &T) {
     let _ = stream.flush();
 }
 
+/// Broadcast snapshot to all connected snapshot subscribers
+fn broadcast_snapshot(clients: &Arc<Mutex<Vec<TcpStream>>>, snapshot: &EngineResponse) {
+    let mut data = serde_json::to_vec(snapshot).unwrap();
+    data.push(b'\n');
+
+    let mut clients = clients.lock().unwrap();
+    clients.retain_mut(|stream| {
+        stream.write_all(&data).is_ok() && stream.flush().is_ok()
+    });
+}
+
 fn main() {
     eprintln!("Starting Rust Matching Engine...");
 
     let persistence_addr = env::var("PERSISTENCE_ADDR").unwrap_or_else(|_| "127.0.0.1:5557".into());
     let ome_feedback_addr = env::var("OME_FEEDBACK_ADDR").unwrap_or_else(|_| "127.0.0.1:5558".into());
     let me_listen_addr = env::var("ME_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:5555".into());
+    let snapshot_listen_addr = env::var("ME_SNAPSHOT_LISTEN").unwrap_or_else(|_| "0.0.0.0:5559".into());
 
     // 1. Connect to Persistence Worker
     let mut db_stream: TcpStream = loop {
@@ -63,9 +76,25 @@ fn main() {
         }
     }
 
+    // 3. Snapshot broadcast listener (Gateway connects here)
+    let snapshot_clients: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
+    let snapshot_clients_acceptor = Arc::clone(&snapshot_clients);
+    thread::spawn(move || {
+        let listener = TcpListener::bind(&snapshot_listen_addr)
+            .expect("ME failed to bind snapshot port");
+        eprintln!("ME: Snapshot listener on {}", snapshot_listen_addr);
+
+        for stream in listener.incoming() {
+            if let Ok(s) = stream {
+                eprintln!("ME: Snapshot subscriber connected.");
+                snapshot_clients_acceptor.lock().unwrap().push(s);
+            }
+        }
+    });
+
     let (tx, rx): (Sender<EngineCommand>, Receiver<EngineCommand>) = unbounded();
 
-    // 3. Engine processing thread
+    // 4. Engine processing thread
     thread::spawn(move || {
         let mut order_book = OrderBook::new(1);
         let mut stop_orders: HashMap<i32, Vec<Order>> = HashMap::new();
@@ -145,15 +174,18 @@ fn main() {
                             &mut order_book,
                             &mut db_stream,
                             &mut ome_feedback_stream,
+                            &snapshot_clients,
                         );
                     }
 
-                    // Send OrderBook snapshot to Persistence (for Gateway to query)
+                    // Broadcast OrderBook snapshot to Gateway subscribers
                     let snap = order_book.get_snapshot(5);
-                    eprintln!(
-                        "SNAPSHOT: Bids={:?} Asks={:?}",
-                        snap.bids, snap.asks
-                    );
+                    let snapshot_msg = EngineResponse::OrderBookSnapshot {
+                        symbol_id,
+                        bids: snap.bids,
+                        asks: snap.asks,
+                    };
+                    broadcast_snapshot(&snapshot_clients, &snapshot_msg);
                 }
 
                 EngineCommand::CancelOrder {
@@ -234,12 +266,21 @@ fn main() {
                             eprintln!("ME: Order #{} Not Found for Cancellation", order_id);
                         }
                     }
+
+                    // Broadcast updated snapshot after cancel
+                    let snap = order_book.get_snapshot(5);
+                    let snapshot_msg = EngineResponse::OrderBookSnapshot {
+                        symbol_id,
+                        bids: snap.bids,
+                        asks: snap.asks,
+                    };
+                    broadcast_snapshot(&snapshot_clients, &snapshot_msg);
                 }
             }
         }
     });
 
-    // 4. TCP listener for commands from OME
+    // 5. TCP listener for commands from OME
     let listener = TcpListener::bind(&me_listen_addr).expect("ME failed to bind");
     for stream in listener.incoming() {
         if let Ok(s) = stream {
@@ -266,6 +307,7 @@ fn check_triggers(
     order_book: &mut OrderBook,
     db_stream: &mut TcpStream,
     ome_feedback_stream: &mut Option<TcpStream>,
+    snapshot_clients: &Arc<Mutex<Vec<TcpStream>>>,
 ) {
     let current_price = *last_price.get(&symbol_id).unwrap_or(&0);
     if current_price == 0 {
@@ -335,6 +377,16 @@ fn check_triggers(
                     );
                 }
             }
+
+            // Broadcast snapshot after triggered order processing
+            let snap = order_book.get_snapshot(5);
+            let snapshot_msg = EngineResponse::OrderBookSnapshot {
+                symbol_id,
+                bids: snap.bids,
+                asks: snap.asks,
+            };
+            broadcast_snapshot(snapshot_clients, &snapshot_msg);
+
             // don't increment i, next element shifted into position
         } else {
             i += 1;
