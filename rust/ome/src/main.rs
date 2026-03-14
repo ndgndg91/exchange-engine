@@ -190,6 +190,32 @@ fn main() {
                                     },
                                 );
                             }
+                            OmeCommand::Withdraw {
+                                user_id,
+                                currency_id,
+                                amount,
+                                seq_id,
+                            } => {
+                                // WAL: journal before processing
+                                journal.write(&OmeCommand::Withdraw { user_id, currency_id, amount, seq_id });
+
+                                if re.withdraw(user_id, currency_id, amount, seq_id) {
+                                    drop(re);
+
+                                    send_json(
+                                        &mut db_stream,
+                                        &PersistMessage::Withdraw {
+                                            user_id,
+                                            currency_id,
+                                            amount,
+                                            seq_id,
+                                        },
+                                    );
+                                    eprintln!("OME: Withdraw approved - user={} amount={} cur={}", user_id, amount, currency_id);
+                                } else {
+                                    eprintln!("OME: Withdraw rejected (Insuff. Funds) - user={} amount={} cur={}", user_id, amount, currency_id);
+                                }
+                            }
                             OmeCommand::Cancel {
                                 user_id,
                                 order_id,

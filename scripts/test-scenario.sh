@@ -35,6 +35,18 @@ do
    sleep 0.1
 done
 
+# 4. 부분 체결 테스트 (User 102, 103)
+echo -e "\n[Step 4] Partial Fill Test..."
+# User 102: Sell 10 BTC @ 55,000
+curl -s -X POST "$BASE_URL/deposit" -H "Content-Type: application/json" -d '{"user_id": 102, "currency_id": 1, "amount": 100}' > /dev/null
+curl -s -X POST "$BASE_URL/order" -H "Content-Type: application/json" -d '{"user_id": 102, "symbol_id": 1, "price": 55000, "qty": 10, "side": 2}' > /dev/null
+echo " > User 102 Selling 10 BTC @ 55,000 (Maker)"
+
+# User 103: Buy 4 BTC @ 55,000
+curl -s -X POST "$BASE_URL/deposit" -H "Content-Type: application/json" -d '{"user_id": 103, "currency_id": 2, "amount": 1000000}' > /dev/null
+curl -s -X POST "$BASE_URL/order" -H "Content-Type: application/json" -d '{"user_id": 103, "symbol_id": 1, "price": 55000, "qty": 4, "side": 1}' > /dev/null
+echo " > User 103 Buying 4 BTC @ 55,000 (Taker) - Partial Fill"
+
 echo -e "\n=================================================="
 echo "Basic Test Finished. Check logs for matches."
 echo "=================================================="

@@ -74,7 +74,8 @@ class HttpApiHandler(private val publisher: AeronPublisher) : SimpleChannelInbou
         val tif: Int? = 0 // Default to GTC
     )
     data class CancelReq(val user_id: Long, val order_id: Long, val symbol_id: Int)
-    data class DepositReq(val user_id: Long, val currency_id: Int, val amount: Long)
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    data class DepositReq(val user_id: Long, val currency_id: Int, val amount: Long, val seq_id: Long? = 0)
 
     override fun channelRead0(ctx: ChannelHandlerContext, req: FullHttpRequest) {
         try {
@@ -115,6 +116,15 @@ class HttpApiHandler(private val publisher: AeronPublisher) : SimpleChannelInbou
                 deposit.wrap(buffer, header.encodedLength()).userId(d.user_id).currencyId(d.currency_id).amount(d.amount).seqId(seqId)
                 publisher.sendBuffer(buffer, 0, header.encodedLength() + deposit.encodedLength())
                 sendResponse(ctx, HttpResponseStatus.OK, "Deposit Sent: $seqId")
+            } else if (req.uri().startsWith("/withdraw")) {
+                val d = mapper.readValue<DepositReq>(content) // Reuse DepositReq structure for withdraw
+                val buffer = UnsafeBuffer(ByteBuffer.allocateDirect(256))
+                val withdraw = WithdrawRequestEncoder()
+                val header = MessageHeaderEncoder()
+                header.wrap(buffer, 0).blockLength(withdraw.sbeBlockLength()).templateId(withdraw.sbeTemplateId()).schemaId(withdraw.sbeSchemaId()).version(withdraw.sbeSchemaVersion())
+                withdraw.wrap(buffer, header.encodedLength()).userId(d.user_id).currencyId(d.currency_id).amount(d.amount).seqId(seqId)
+                publisher.sendBuffer(buffer, 0, header.encodedLength() + withdraw.encodedLength())
+                sendResponse(ctx, HttpResponseStatus.OK, "Withdraw Sent: $seqId")
             } else if (req.uri().startsWith("/order")) {
                 val o = mapper.readValue<OrderReq>(content)
                 val side = if (o.side == 1) Side.Buy else Side.Sell

@@ -108,8 +108,7 @@ class OrderBook(val symbolId: Int) {
             }
             
             if (availableQty < taker.qty) {
-                // Cannot fill entirely, "Kill" the order
-                taker.qty = 0 
+                // Cannot fill entirely, return without matching. MatchingServer will detect taker.qty > 0 and cancel.
                 return
             }
         }

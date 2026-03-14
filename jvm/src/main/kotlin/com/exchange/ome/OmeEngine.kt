@@ -23,6 +23,7 @@ class OmeEngine(
     private val cmdHeaderDecoder = MessageHeaderDecoder()
     private val cmdNewOrderDecoder = NewOrderSingleDecoder()
     private val cmdDepositDecoder = DepositDecoder()
+    private val cmdWithdrawDecoder = WithdrawRequestDecoder()
     private val cmdCancelDecoder = OrderCancelDecoder()
     
     // Reusing buffers for encoding before sending/journaling
@@ -75,6 +76,14 @@ class OmeEngine(
                 cmdDepositDecoder.amount(),
                 cmdDepositDecoder.seqId()
             )
+        } else if (templateId == WithdrawRequestDecoder.TEMPLATE_ID) {
+            cmdWithdrawDecoder.wrap(buffer, bodyOffset, actingBlockLength, actingVersion)
+            onWithdrawRequest(
+                cmdWithdrawDecoder.userId(),
+                cmdWithdrawDecoder.currencyId(),
+                cmdWithdrawDecoder.amount(),
+                cmdWithdrawDecoder.seqId()
+            )
         } else if (templateId == OrderCancelEncoder.TEMPLATE_ID) {
             cmdCancelDecoder.wrap(buffer, bodyOffset, actingBlockLength, actingVersion)
             onCancelRequest(
@@ -95,6 +104,7 @@ class OmeEngine(
     }
 
     fun onCancelRequest(userId: Long, orderId: Long, symbolId: Int, seqId: Long) {
+        println("OME: Cancel Request - User $userId, Order $orderId, Seq $seqId")
         // 1. Encode
         headerEncoder.wrap(tempBuffer, 0)
             .blockLength(cancelEncoder.sbeBlockLength())
@@ -128,9 +138,9 @@ class OmeEngine(
         triggerPrice: Long = 0,
         tif: TimeInForce = TimeInForce.GTC
     ) {
+        println("OME: Order Request - User $userId, Sym $symbolId, Side $side, Qty $qty, Price $price, Seq $seqId")
         // 1. Risk Check (with Idempotency)
-        if (!riskEngine.preCheckOrder(userId, symbolId, side, price, qty, seqId)) {
-            // Log warning: either insufficient funds or already processed
+        if (!riskEngine.preCheckOrder(userId, symbolId, side, price, qty, seqId, type)) {
             return
         }
 
@@ -162,6 +172,7 @@ class OmeEngine(
     }
 
     fun onDeposit(userId: Long, currencyId: Int, amount: Long, seqId: Long) {
+        println("OME: Deposit Request - User $userId, Cur $currencyId, Amount $amount, Seq $seqId")
         // 1. Update Balance
         riskEngine.onDeposit(userId, currencyId, amount)
 
@@ -182,24 +193,20 @@ class OmeEngine(
         
         // 3. Journal
         journal.write(tempBuffer, 0, length)
-        
-        // 4. Publish - REMOVED to avoid duplication loop (Worker already listens to Stream 10)
     }
     
     // For Simulation / Injection (Publishes to Aeron so Worker can see it)
     fun injectDeposit(userId: Long, currencyId: Int, amount: Long, seqId: Long) {
         onDeposit(userId, currencyId, amount, seqId)
-        
-        // Re-encode because tempBuffer might be reused (though in single thread it's safe, being explicit is better)
-        // Actually onDeposit leaves data in tempBuffer.
         val length = headerEncoder.encodedLength() + depositEncoder.encodedLength()
         publisher.sendBuffer(tempBuffer, 0, length)
     }
     
     fun onWithdrawRequest(userId: Long, currencyId: Int, amount: Long, seqId: Long) {
+        println("OME: Withdraw Request - User $userId, Cur $currencyId, Amount $amount, Seq $seqId")
         // 1. Risk Check (Lock funds)
-        if (!riskEngine.onWithdrawRequest(userId, currencyId, amount)) {
-            println("Withdrawal Failed: Insufficient Funds for User $userId")
+        if (!riskEngine.onWithdrawRequest(userId, currencyId, amount, seqId)) {
+            println("Withdrawal Failed: Insufficient Funds or Duplicate for User $userId")
             return
         }
         

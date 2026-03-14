@@ -40,7 +40,7 @@ object ExchangeConstants {
 }
 
 class AeronPublisher(private val aeron: Aeron) {
-    private val publication = ExchangeConstants.retryAeronAction("InputPub") { aeron.addPublication(ExchangeConstants.PUB_CHANNEL, ExchangeConstants.STREAM_ID) }
+    private val publication = ExchangeConstants.retryAeronAction("InputPub") { aeron.addPublication(ExchangeConstants.SUB_CHANNEL, ExchangeConstants.STREAM_ID) }
     private val enginePublication = ExchangeConstants.retryAeronAction("EnginePub") { aeron.addPublication(ExchangeConstants.PUB_CHANNEL, ExchangeConstants.ENGINE_STREAM_ID) }
     
     private val bufferTl = ThreadLocal.withInitial { UnsafeBuffer(ByteBuffer.allocateDirect(1024)) }
@@ -153,7 +153,7 @@ class AeronSubscriber(private val aeron: Aeron, private val disruptorRingBuffer:
         if (headerDecoder.templateId() == NewOrderSingleEncoder.TEMPLATE_ID) {
             newOrderDecoder.wrap(buffer, bodyOffset, headerDecoder.blockLength(), headerDecoder.version())
             event.userId = newOrderDecoder.userId()
-            event.orderId = 0
+            event.orderId = newOrderDecoder.seqId()
             event.symbolId = newOrderDecoder.symbolId()
             event.price = newOrderDecoder.price()
             event.qty = newOrderDecoder.qty()

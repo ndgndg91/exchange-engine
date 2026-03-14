@@ -2,6 +2,7 @@ package com.exchange.ome
 
 import com.exchange.ome.model.Account
 import com.exchange.sbe.Side
+import com.exchange.sbe.OrderType
 import org.eclipse.collections.impl.map.mutable.primitive.LongObjectHashMap
 
 class RiskEngine {
@@ -20,126 +21,108 @@ class RiskEngine {
 
     /**
      * Pre-trade Risk Check (New Order)
-     * Returns true if valid and funds locked.
-     * Returns false if insufficient funds or duplicate request.
      */
-    fun preCheckOrder(userId: Long, symbolId: Int, side: Side, price: Long, qty: Long, seqId: Long): Boolean {
-        // Idempotency check: If seqId is already processed for this user, reject.
+    fun preCheckOrder(userId: Long, symbolId: Int, side: Side, price: Long, qty: Long, seqId: Long, type: OrderType = OrderType.Limit): Boolean {
         if (lastProcessedSeqId.containsKey(userId) && lastProcessedSeqId.get(userId) >= seqId) {
-            println("Idempotency Block: User $userId already processed seqId $seqId (Last=${lastProcessedSeqId.get(userId)})")
             return false
         }
 
         val account = getAccount(userId)
-        
-        // Simplified currency mapping for prototype:
-        // Symbol 1 (BTC/USDT): Base=BTC(1), Quote=USDT(2)
         val currencyId = if (side == Side.Buy) 2 else 1
-        val requiredAmount = if (side == Side.Buy) (price * qty) / 100_000_000L else qty
-        
+
+        val requiredAmount = if (side == Side.Buy) {
+            (price * qty) / 100_000_000L
+        } else {
+            qty
+        }
+
         val balance = account.getBalance(currencyId)
-        
+
         if (balance.available >= requiredAmount) {
             balance.available -= requiredAmount
             balance.locked += requiredAmount
-            
-            // Mark as processed
             lastProcessedSeqId.put(userId, seqId)
             return true
         }
-        
-        println("Risk Fail: User $userId Cur=$currencyId Avail=${balance.available} Req=$requiredAmount")
-        
         return false
     }
-
     /**
      * Handle Execution Report (Trade Settlement)
-     * Adjusts Locked and Available balances based on trade execution.
      */
     fun onTrade(makerUserId: Long, takerUserId: Long, side: Side, price: Long, qty: Long) {
-        // NOTE: 'side' parameter is the Taker's side.
-        
         val cost = (price * qty) / 100_000_000L
         val baseCurrency = 1 // BTC
-        val quoteCurrency = 2 // USDT
+        val quoteCurrency = 2 // KRW
 
         // Taker Processing
         val taker = getAccount(takerUserId)
         if (side == Side.Buy) {
-            // Taker Bought BTC (Paid USDT)
-            // Unlock used USDT, Deduct cost
             val usdt = taker.getBalance(quoteCurrency)
-            usdt.locked -= cost // Assumes exact match for simplicity. In real life, might be less if price improved.
-            
-            // Add BTC
-            val btc = taker.getBalance(baseCurrency)
-            btc.available += qty
+            val actualDeduction = Math.min(cost, usdt.locked)
+            val remainder = cost - actualDeduction
+            usdt.locked -= actualDeduction
+            usdt.available -= remainder
+            taker.getBalance(baseCurrency).available += qty
         } else {
-            // Taker Sold BTC (Received USDT)
-            // Unlock used BTC, Deduct qty
             val btc = taker.getBalance(baseCurrency)
-            btc.locked -= qty
-            
-            // Add USDT
-            val usdt = taker.getBalance(quoteCurrency)
-            usdt.available += cost
+            val actualDeduction = Math.min(qty, btc.locked)
+            val remainder = qty - actualDeduction
+            btc.locked -= actualDeduction
+            btc.available -= remainder
+            taker.getBalance(quoteCurrency).available += cost
         }
 
-        // Maker Processing (Opposite side)
+        // Maker Processing
         val maker = getAccount(makerUserId)
         if (side == Side.Buy) {
-            // Maker was Selling BTC
             val btc = maker.getBalance(baseCurrency)
-            btc.locked -= qty
-            
-            val usdt = maker.getBalance(quoteCurrency)
-            usdt.available += cost
+            val actualDeduction = Math.min(qty, btc.locked)
+            val remainder = qty - actualDeduction
+            btc.locked -= actualDeduction
+            btc.available -= remainder
+            maker.getBalance(quoteCurrency).available += cost
         } else {
-            // Maker was Buying BTC
             val usdt = maker.getBalance(quoteCurrency)
-            usdt.locked -= cost
-            
-            val btc = maker.getBalance(baseCurrency)
-            btc.available += qty
+            val actualDeduction = Math.min(cost, usdt.locked)
+            val remainder = cost - actualDeduction
+            usdt.locked -= actualDeduction
+            usdt.available -= remainder
+            maker.getBalance(baseCurrency).available += qty
         }
     }
     
     fun onDeposit(userId: Long, currencyId: Int, amount: Long) {
-        val account = getAccount(userId)
-        val balance = account.getBalance(currencyId)
-        balance.available += amount
+        getAccount(userId).getBalance(currencyId).available += amount
     }
 
-    fun onWithdrawRequest(userId: Long, currencyId: Int, amount: Long): Boolean {
-        val account = getAccount(userId)
-        val balance = account.getBalance(currencyId)
-        
+    fun onWithdrawRequest(userId: Long, currencyId: Int, amount: Long, seqId: Long = 0): Boolean {
+        if (seqId != 0L && lastProcessedSeqId.containsKey(userId) && lastProcessedSeqId.get(userId) >= seqId) {
+            return false
+        }
+
+        val balance = getAccount(userId).getBalance(currencyId)
         if (balance.available >= amount) {
             balance.available -= amount
             balance.locked += amount
+            if (seqId != 0L) lastProcessedSeqId.put(userId, seqId)
             return true
         }
         return false
     }
     
-    // Unlock Funds (Refund)
     fun onCancel(orderId: Long, side: Side, price: Long, qty: Long, userId: Long) {
-        val account = getAccount(userId)
         val isBuy = (side == Side.Buy)
-        
-        // Locked Asset: Buy -> Quote(2), Sell -> Base(1)
         val currencyId = if (isBuy) 2 else 1
         val unlockAmount = if (isBuy) (price * qty) / 100_000_000L else qty
         
-        val balance = account.getBalance(currencyId)
-        balance.locked -= unlockAmount
-        balance.available += unlockAmount
+        val balance = getAccount(userId).getBalance(currencyId)
+        val actualUnlock = Math.min(unlockAmount, balance.locked)
         
-        println("Risk: Order $orderId Cancelled. Refunded $unlockAmount to User $userId")
+        balance.locked -= actualUnlock
+        balance.available += actualUnlock
+        println("Risk: Order $orderId Cancelled. Refunded $actualUnlock to User $userId")
     }
     
-    // Helper to deposit funds for testing
     fun deposit(userId: Long, currencyId: Int, amount: Long) {
         onDeposit(userId, currencyId, amount)
     }

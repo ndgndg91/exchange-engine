@@ -87,6 +87,7 @@ async fn main() {
     let app = Router::new()
         .route("/order", post(handle_order))
         .route("/deposit", post(handle_deposit))
+        .route("/withdraw", post(handle_withdraw))
         .route("/cancel", post(handle_cancel))
         .route("/orderbook", get(handle_orderbook))
         .with_state(state);
@@ -179,6 +180,20 @@ async fn handle_deposit(Json(payload): Json<DepositRequest>) -> impl IntoRespons
 
     send_to_ome(cmd);
     format!("Deposit Sent: {}", seq_id)
+}
+
+async fn handle_withdraw(Json(payload): Json<DepositRequest>) -> impl IntoResponse {
+    let seq_id = SEQ_ID.fetch_add(1, Ordering::SeqCst);
+
+    let cmd = OmeCommand::Withdraw {
+        user_id: payload.user_id,
+        currency_id: payload.currency_id,
+        amount: payload.amount,
+        seq_id,
+    };
+
+    send_to_ome(cmd);
+    format!("Withdraw Sent: {}", seq_id)
 }
 
 async fn handle_cancel(Json(payload): Json<CancelRequest>) -> impl IntoResponse {

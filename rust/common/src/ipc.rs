@@ -28,6 +28,12 @@ pub enum PersistMessage {
         side: Side,
         price: i64,
     },
+    Withdraw {
+        user_id: u64,
+        currency_id: i32,
+        amount: i64,
+        seq_id: u64,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -35,6 +41,12 @@ pub enum PersistMessage {
 pub enum OmeCommand {
     Order(Order),
     Deposit {
+        user_id: u64,
+        currency_id: i32,
+        amount: i64,
+        seq_id: u64,
+    },
+    Withdraw {
         user_id: u64,
         currency_id: i32,
         amount: i64,

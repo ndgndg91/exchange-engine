@@ -4,25 +4,21 @@ metadata:
   name: exchange-config
 data:
   DB_HOST: "exchange-db"
-  # Roles: PUB points to the destination, SUB binds to local 0.0.0.0
-  PUB_TO_ME: "aeron:udp?endpoint=matching-engine:40124"
-  PUB_TO_OME: "aeron:udp?endpoint=ome:40123"
-  SUB_LISTEN_ME: "aeron:udp?endpoint=0.0.0.0:40124"
-  SUB_LISTEN_OME: "aeron:udp?endpoint=0.0.0.0:40123"
+  AERON_CHANNEL: "aeron:ipc"
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: matching-engine
+  name: exchange-stack
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: matching-engine
+      app: exchange-stack
   template:
     metadata:
       labels:
-        app: matching-engine
+        app: exchange-stack
     spec:
       initContainers:
         - name: wait-db
@@ -30,10 +26,10 @@ spec:
           command: ['sh', '-c', 'until nc -z exchange-db 5432; do sleep 1; done']
       volumes:
         - name: dshm
-          emptyDir: { medium: Memory, sizeLimit: 256Mi }
+          emptyDir: { medium: Memory, sizeLimit: 1Gi }
       containers:
         - name: matching-engine
-          image: exchange-engine-matching-engine:v-pure-final
+          image: exchange-engine:v-1773490500
           volumeMounts:
             - mountPath: /dev/shm
               name: dshm
@@ -41,36 +37,14 @@ spec:
             - name: MAIN_CLASS
               value: "com.exchange.MatchingServerKt"
             - name: ARGS
-              value: "--embedded-driver"
+              value: "--embedded-driver" # ONLY ONE embedded driver
             - name: AERON_PUB_CHANNEL
-              valueFrom: { configMapKeyRef: { name: exchange-config, key: PUB_TO_OME } }
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
             - name: AERON_SUB_CHANNEL
-              valueFrom: { configMapKeyRef: { name: exchange-config, key: SUB_LISTEN_ME } }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ome
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ome
-  template:
-    metadata:
-      labels:
-        app: ome
-    spec:
-      initContainers:
-        - name: wait-db
-          image: busybox:1.36
-          command: ['sh', '-c', 'until nc -z exchange-db 5432; do sleep 1; done']
-      volumes:
-        - name: dshm
-          emptyDir: { medium: Memory, sizeLimit: 256Mi }
-      containers:
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
+
         - name: ome
-          image: exchange-engine-ome:v-pure-final
+          image: exchange-engine:v-1773490500
           volumeMounts:
             - mountPath: /dev/shm
               name: dshm
@@ -78,13 +52,14 @@ spec:
             - name: MAIN_CLASS
               value: "com.exchange.OmeServerKt"
             - name: ARGS
-              value: "--embedded-driver"
+              value: ""
             - name: AERON_PUB_CHANNEL
-              valueFrom: { configMapKeyRef: { name: exchange-config, key: PUB_TO_ME } }
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
             - name: AERON_SUB_CHANNEL
-              valueFrom: { configMapKeyRef: { name: exchange-config, key: SUB_LISTEN_OME } }
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
+
         - name: persistence-worker
-          image: exchange-engine-persistence-worker:v-pure-final
+          image: exchange-engine:v-1773490500
           volumeMounts:
             - mountPath: /dev/shm
               name: dshm
@@ -96,34 +71,12 @@ spec:
             - name: DB_HOST
               valueFrom: { configMapKeyRef: { name: exchange-config, key: DB_HOST } }
             - name: AERON_PUB_CHANNEL
-              value: "aeron:udp?endpoint=localhost:40123"
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
             - name: AERON_SUB_CHANNEL
-              valueFrom: { configMapKeyRef: { name: exchange-config, key: SUB_LISTEN_OME } }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: gateway
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: gateway
-  template:
-    metadata:
-      labels:
-        app: gateway
-    spec:
-      initContainers:
-        - name: wait-db
-          image: busybox:1.36
-          command: ['sh', '-c', 'until nc -z exchange-db 5432; do sleep 1; done']
-      volumes:
-        - name: dshm
-          emptyDir: { medium: Memory, sizeLimit: 256Mi }
-      containers:
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
+
         - name: gateway
-          image: exchange-engine-gateway:v-pure-final
+          image: exchange-engine:v-1773490500
           ports:
             - containerPort: 8080
           volumeMounts:
@@ -133,8 +86,18 @@ spec:
             - name: MAIN_CLASS
               value: "com.exchange.GatewayServerKt"
             - name: ARGS
-              value: "--embedded-driver"
+              value: ""
             - name: AERON_PUB_CHANNEL
-              valueFrom: { configMapKeyRef: { name: exchange-config, key: PUB_TO_OME } }
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
             - name: AERON_SUB_CHANNEL
-              valueFrom: { configMapKeyRef: { name: exchange-config, key: SUB_LISTEN_ME } }
+              valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  ports:
+    - port: 8080
+  selector:
+    app: exchange-stack

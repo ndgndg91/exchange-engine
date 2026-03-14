@@ -51,7 +51,7 @@ impl OrderBook {
                 }
             }
             if available_qty < taker.qty {
-                taker.qty = 0; // Kill
+                // Cannot fill entirely, return without matching. Caller will detect taker.qty > 0 and cancel.
                 return;
             }
         }
@@ -107,7 +107,7 @@ impl OrderBook {
                 }
             }
             if available_qty < taker.qty {
-                taker.qty = 0; // Kill
+                // Cannot fill entirely, return without matching. Caller will detect taker.qty > 0 and cancel.
                 return;
             }
         }

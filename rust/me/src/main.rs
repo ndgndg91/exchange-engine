@@ -1,6 +1,6 @@
 mod order_book;
 
-use common::{Order, OrderType, Side, ipc::{EngineResponse, PersistMessage}};
+use common::{Order, OrderType, Side, TimeInForce, ipc::{EngineResponse, PersistMessage}};
 use order_book::OrderBook;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,41 @@ fn broadcast_snapshot(clients: &Arc<Mutex<Vec<TcpStream>>>, snapshot: &EngineRes
     });
 }
 
+fn handle_post_match_cancellation(
+    order: &Order,
+    db_stream: &mut TcpStream,
+    ome_feedback_stream: &mut Option<TcpStream>,
+) {
+    if order.qty > 0 && (order.order_type == OrderType::Market || order.time_in_force == TimeInForce::IOC || order.time_in_force == TimeInForce::FOK) {
+        eprintln!("ME: IOC/FOK/Market Unfilled Part Cancelled: {} for Order #{}", order.qty, order.order_id);
+        
+        send_json(
+            db_stream,
+            &PersistMessage::CancelOrder {
+                order_id: order.order_id,
+                user_id: order.user_id,
+                symbol_id: order.symbol_id,
+                leaves_qty: order.qty,
+                side: order.side,
+                price: order.price,
+            },
+        );
+
+        if let Some(ref mut ome_stream) = ome_feedback_stream {
+            send_json(
+                ome_stream,
+                &EngineResponse::OrderCancelled {
+                    order_id: order.order_id,
+                    user_id: order.user_id,
+                    side: order.side,
+                    price: order.price,
+                    leaves_qty: order.qty,
+                },
+            );
+        }
+    }
+}
+
 fn main() {
     eprintln!("Starting Rust Matching Engine...");
 
@@ -46,7 +81,6 @@ fn main() {
     let me_listen_addr = env::var("ME_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:5555".into());
     let snapshot_listen_addr = env::var("ME_SNAPSHOT_LISTEN").unwrap_or_else(|_| "0.0.0.0:5559".into());
 
-    // 1. Connect to Persistence Worker
     let mut db_stream: TcpStream = loop {
         match TcpStream::connect(&persistence_addr) {
             Ok(s) => {
@@ -60,7 +94,6 @@ fn main() {
         }
     };
 
-    // 2. Connect to OME feedback port (reverse TCP)
     let mut ome_feedback_stream: Option<TcpStream> = None;
     for _ in 0..10 {
         match TcpStream::connect(&ome_feedback_addr) {
@@ -76,7 +109,6 @@ fn main() {
         }
     }
 
-    // 3. Snapshot broadcast listener (Gateway connects here)
     let snapshot_clients: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
     let snapshot_clients_acceptor = Arc::clone(&snapshot_clients);
     thread::spawn(move || {
@@ -94,7 +126,6 @@ fn main() {
 
     let (tx, rx): (Sender<EngineCommand>, Receiver<EngineCommand>) = unbounded();
 
-    // 4. Engine processing thread
     thread::spawn(move || {
         let mut order_book = OrderBook::new(1);
         let mut stop_orders: HashMap<i32, Vec<Order>> = HashMap::new();
@@ -104,10 +135,9 @@ fn main() {
 
         while let Ok(cmd) = rx.recv() {
             match cmd {
-                EngineCommand::NewOrder(order) => {
+                EngineCommand::NewOrder(mut order) => {
                     let symbol_id = order.symbol_id;
 
-                    // Stop orders: store and wait for trigger
                     if order.order_type == OrderType::StopLimit
                         || order.order_type == OrderType::StopMarket
                     {
@@ -119,13 +149,12 @@ fn main() {
                         continue;
                     }
 
-                    // Normal order processing
                     let taker_side = order.side;
-                    let matches = order_book.process_order(order);
-                    let mut had_match = false;
+                    let matches = order_book.process_order(order.clone());
+                    let mut matched_qty = 0;
 
                     for m in &matches {
-                        had_match = true;
+                        matched_qty += m.qty;
                         *last_price.entry(symbol_id).or_insert(0) = m.price;
 
                         eprintln!(
@@ -133,7 +162,6 @@ fn main() {
                             m.match_id, m.price, m.qty, m.maker_order_id, m.taker_order_id
                         );
 
-                        // Send to Persistence
                         send_json(
                             &mut db_stream,
                             &PersistMessage::Trade {
@@ -148,7 +176,6 @@ fn main() {
                             },
                         );
 
-                        // Send feedback to OME
                         if let Some(ref mut ome_stream) = ome_feedback_stream {
                             send_json(
                                 ome_stream,
@@ -164,9 +191,11 @@ fn main() {
                             );
                         }
                     }
+                    
+                    order.qty -= matched_qty;
+                    handle_post_match_cancellation(&order, &mut db_stream, &mut ome_feedback_stream);
 
-                    // Check stop order triggers after a match
-                    if had_match {
+                    if !matches.is_empty() {
                         check_triggers(
                             symbol_id,
                             &mut stop_orders,
@@ -178,7 +207,6 @@ fn main() {
                         );
                     }
 
-                    // Broadcast OrderBook snapshot to Gateway subscribers
                     let snap = order_book.get_snapshot(5);
                     let snapshot_msg = EngineResponse::OrderBookSnapshot {
                         symbol_id,
@@ -195,14 +223,12 @@ fn main() {
                 } => {
                     eprintln!("ME: Cancel Request Order #{}", order_id);
 
-                    // Try cancel from normal order book
                     if let Some(cancelled) = order_book.cancel_order(order_id) {
                         eprintln!(
                             "ME: Order #{} Cancelled. LeavesQty={}",
                             order_id, cancelled.leaves_qty
                         );
 
-                        // Send to Persistence
                         send_json(
                             &mut db_stream,
                             &PersistMessage::CancelOrder {
@@ -215,7 +241,6 @@ fn main() {
                             },
                         );
 
-                        // Send feedback to OME for balance unlock
                         if let Some(ref mut ome_stream) = ome_feedback_stream {
                             send_json(
                                 ome_stream,
@@ -229,7 +254,6 @@ fn main() {
                             );
                         }
                     } else {
-                        // Try cancel from stop orders
                         let stops = stop_orders.entry(symbol_id).or_default();
                         if let Some(pos) = stops.iter().position(|s| s.order_id == order_id) {
                             let removed = stops.remove(pos);
@@ -267,7 +291,6 @@ fn main() {
                         }
                     }
 
-                    // Broadcast updated snapshot after cancel
                     let snap = order_book.get_snapshot(5);
                     let snapshot_msg = EngineResponse::OrderBookSnapshot {
                         symbol_id,
@@ -280,7 +303,6 @@ fn main() {
         }
     });
 
-    // 5. TCP listener for commands from OME
     let listener = TcpListener::bind(&me_listen_addr).expect("ME failed to bind");
     for stream in listener.incoming() {
         if let Ok(s) = stream {
@@ -299,7 +321,6 @@ fn main() {
     }
 }
 
-/// Check and trigger stop orders based on last traded price
 fn check_triggers(
     symbol_id: i32,
     stop_orders: &mut HashMap<i32, Vec<Order>>,
@@ -335,7 +356,6 @@ fn check_triggers(
                 stop.order_id, current_price
             );
 
-            // Convert: StopMarket -> Market, StopLimit -> Limit
             stop.order_type = if stop.order_type == OrderType::StopMarket {
                 OrderType::Market
             } else {
@@ -343,9 +363,11 @@ fn check_triggers(
             };
 
             let taker_side = stop.side;
-            let matches = order_book.process_order(stop);
+            let matches = order_book.process_order(stop.clone());
+            let mut matched_qty = 0;
 
             for m in &matches {
+                matched_qty += m.qty;
                 *last_price.entry(symbol_id).or_insert(0) = m.price;
 
                 send_json(
@@ -377,8 +399,10 @@ fn check_triggers(
                     );
                 }
             }
+            
+            stop.qty -= matched_qty;
+            handle_post_match_cancellation(&stop, db_stream, ome_feedback_stream);
 
-            // Broadcast snapshot after triggered order processing
             let snap = order_book.get_snapshot(5);
             let snapshot_msg = EngineResponse::OrderBookSnapshot {
                 symbol_id,
@@ -386,8 +410,6 @@ fn check_triggers(
                 asks: snap.asks,
             };
             broadcast_snapshot(snapshot_clients, &snapshot_msg);
-
-            // don't increment i, next element shifted into position
         } else {
             i += 1;
         }
