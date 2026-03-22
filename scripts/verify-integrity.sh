@@ -1,6 +1,9 @@
 #!/bin/bash
 
-BASE_URL="http://localhost:8080"
+# Load common configurations
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SOURCE_DIR/common.sh"
+
 # Default to docker if not provided
 if [[ -z "$DB_CMD" ]]; then
     DB_CMD="docker exec exchange-db psql -U postgres -d exchange -t -c"

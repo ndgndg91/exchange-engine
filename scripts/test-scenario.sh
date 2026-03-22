@@ -1,10 +1,13 @@
 #!/bin/bash
 
-BASE_URL="http://127.0.0.1:8080"
+# Load common configurations
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SOURCE_DIR/common.sh"
 
 echo "=================================================="
 echo "Exchange Engine Test Scenario (JSON)"
 echo "User 100: BTC Seller, User 101: KRW Buyer"
+echo "Target: $BASE_URL"
 echo "=================================================="
 
 # 1. 입금
