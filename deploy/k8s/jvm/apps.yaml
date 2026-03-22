@@ -29,7 +29,7 @@ spec:
           emptyDir: { medium: Memory, sizeLimit: 1Gi }
       containers:
         - name: matching-engine
-          image: exchange-engine:v-1773490500
+          image: exchange-engine:v-1774187518
           volumeMounts:
             - mountPath: /dev/shm
               name: dshm
@@ -44,7 +44,7 @@ spec:
               valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
 
         - name: ome
-          image: exchange-engine:v-1773490500
+          image: exchange-engine:v-1774187518
           volumeMounts:
             - mountPath: /dev/shm
               name: dshm
@@ -59,7 +59,7 @@ spec:
               valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
 
         - name: persistence-worker
-          image: exchange-engine:v-1773490500
+          image: exchange-engine:v-1774187518
           volumeMounts:
             - mountPath: /dev/shm
               name: dshm
@@ -76,7 +76,7 @@ spec:
               valueFrom: { configMapKeyRef: { name: exchange-config, key: AERON_CHANNEL } }
 
         - name: gateway
-          image: exchange-engine:v-1773490500
+          image: exchange-engine:v-1774187518
           ports:
             - containerPort: 8080
           volumeMounts:

@@ -26,7 +26,7 @@ spec:
           command: ['sh', '-c', 'until nc -z exchange-db 5432; do sleep 1; done']
       containers:
         - name: persistence
-          image: exchange-engine-rust:v-1773490500
+          image: exchange-engine-rust:v-1774187328
           command: ["persistence"]
           ports:
             - containerPort: 5557
@@ -74,7 +74,7 @@ spec:
           command: ['sh', '-c', 'until nc -z rust-persistence 5557; do sleep 1; done']
       containers:
         - name: matching-engine
-          image: exchange-engine-rust:v-1773490500
+          image: exchange-engine-rust:v-1774187328
           command: ["me"]
           ports:
             - containerPort: 5555
@@ -134,7 +134,7 @@ spec:
           command: ['sh', '-c', 'until nc -z rust-persistence 5557; do sleep 1; done']
       containers:
         - name: ome
-          image: exchange-engine-rust:v-1773490500
+          image: exchange-engine-rust:v-1774187328
           command: ["ome"]
           ports:
             - containerPort: 5556
@@ -192,7 +192,7 @@ spec:
           command: ['sh', '-c', 'until nc -z rust-matching-engine 5559; do sleep 1; done']
       containers:
         - name: gateway
-          image: exchange-engine-rust:v-1773490500
+          image: exchange-engine-rust:v-1774187328
           command: ["gateway"]
           ports:
             - containerPort: 8080
