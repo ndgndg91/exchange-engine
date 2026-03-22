@@ -38,7 +38,6 @@ function deploy_rust() {
     echo "[3/4] Deploying Rust Stack..."
     sed -i '' "s|image: exchange-engine-rust:.*|image: exchange-engine-rust:$V|g" "$PROJECT_ROOT/deploy/k8s/rust/apps.yaml"
     kubectl apply -f "$PROJECT_ROOT/deploy/k8s/base/db.yaml"
-    kubectl apply -f "$PROJECT_ROOT/deploy/k8s/rust/services.yaml"
     kubectl apply -f "$PROJECT_ROOT/deploy/k8s/rust/apps.yaml"
     wait_for_pods exchange-db rust-persistence rust-matching-engine rust-ome rust-gateway
 }

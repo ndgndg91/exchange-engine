@@ -19,6 +19,29 @@ class RiskEngine {
         return account
     }
 
+    private fun adjustBalance(userId: Long, currencyId: Int, availDelta: Long, lockDelta: Long) {
+        val account = getAccount(userId)
+        val balance = account.getBalance(currencyId)
+
+        if (lockDelta < 0) {
+            val toDeduct = -lockDelta
+            val actualDeduction = Math.min(toDeduct, balance.locked)
+            val remainder = toDeduct - actualDeduction
+            
+            balance.locked -= actualDeduction
+            if (availDelta > 0) {
+                // Profit scenario
+                balance.available += availDelta
+            } else {
+                // Cost scenario: deduct remainder from available
+                balance.available = Math.max(0, balance.available + availDelta - remainder)
+            }
+        } else {
+            balance.available = Math.max(0, balance.available + availDelta)
+            balance.locked = Math.max(0, balance.locked + lockDelta)
+        }
+    }
+
     /**
      * Pre-trade Risk Check (New Order)
      */
@@ -27,25 +50,32 @@ class RiskEngine {
             return false
         }
 
-        val account = getAccount(userId)
         val currencyId = if (side == Side.Buy) 2 else 1
 
+        // Market Buy Orders (price=0) protection
+        val effectivePrice = if (side == Side.Buy && price == 0L) {
+            100_000_000L // 1.0 safety price
+        } else {
+            price
+        }
+
         val requiredAmount = if (side == Side.Buy) {
-            (price * qty) / 100_000_000L
+            (effectivePrice * qty) / 100_000_000L
         } else {
             qty
         }
 
+        val account = getAccount(userId)
         val balance = account.getBalance(currencyId)
 
         if (balance.available >= requiredAmount) {
-            balance.available -= requiredAmount
-            balance.locked += requiredAmount
+            adjustBalance(userId, currencyId, -requiredAmount, requiredAmount)
             lastProcessedSeqId.put(userId, seqId)
             return true
         }
         return false
     }
+
     /**
      * Handle Execution Report (Trade Settlement)
      */
@@ -54,45 +84,25 @@ class RiskEngine {
         val baseCurrency = 1 // BTC
         val quoteCurrency = 2 // KRW
 
-        // Taker Processing
-        val taker = getAccount(takerUserId)
-        if (side == Side.Buy) {
-            val usdt = taker.getBalance(quoteCurrency)
-            val actualDeduction = Math.min(cost, usdt.locked)
-            val remainder = cost - actualDeduction
-            usdt.locked -= actualDeduction
-            usdt.available -= remainder
-            taker.getBalance(baseCurrency).available += qty
-        } else {
-            val btc = taker.getBalance(baseCurrency)
-            val actualDeduction = Math.min(qty, btc.locked)
-            val remainder = qty - actualDeduction
-            btc.locked -= actualDeduction
-            btc.available -= remainder
-            taker.getBalance(quoteCurrency).available += cost
-        }
-
-        // Maker Processing
-        val maker = getAccount(makerUserId)
-        if (side == Side.Buy) {
-            val btc = maker.getBalance(baseCurrency)
-            val actualDeduction = Math.min(qty, btc.locked)
-            val remainder = qty - actualDeduction
-            btc.locked -= actualDeduction
-            btc.available -= remainder
-            maker.getBalance(quoteCurrency).available += cost
-        } else {
-            val usdt = maker.getBalance(quoteCurrency)
-            val actualDeduction = Math.min(cost, usdt.locked)
-            val remainder = cost - actualDeduction
-            usdt.locked -= actualDeduction
-            usdt.available -= remainder
-            maker.getBalance(baseCurrency).available += qty
+        if (side == Side.Buy) { // Taker is Buying
+            // Taker
+            adjustBalance(takerUserId, quoteCurrency, 0, -cost)
+            adjustBalance(takerUserId, baseCurrency, qty, 0)
+            // Maker
+            adjustBalance(makerUserId, baseCurrency, 0, -qty)
+            adjustBalance(makerUserId, quoteCurrency, cost, 0)
+        } else { // Taker is Selling
+            // Taker
+            adjustBalance(takerUserId, baseCurrency, 0, -qty)
+            adjustBalance(takerUserId, quoteCurrency, cost, 0)
+            // Maker
+            adjustBalance(makerUserId, quoteCurrency, 0, -cost)
+            adjustBalance(makerUserId, baseCurrency, qty, 0)
         }
     }
     
     fun onDeposit(userId: Long, currencyId: Int, amount: Long) {
-        getAccount(userId).getBalance(currencyId).available += amount
+        adjustBalance(userId, currencyId, amount, 0)
     }
 
     fun onWithdrawRequest(userId: Long, currencyId: Int, amount: Long, seqId: Long = 0): Boolean {
@@ -102,8 +112,7 @@ class RiskEngine {
 
         val balance = getAccount(userId).getBalance(currencyId)
         if (balance.available >= amount) {
-            balance.available -= amount
-            balance.locked += amount
+            adjustBalance(userId, currencyId, -amount, amount)
             if (seqId != 0L) lastProcessedSeqId.put(userId, seqId)
             return true
         }
@@ -115,12 +124,8 @@ class RiskEngine {
         val currencyId = if (isBuy) 2 else 1
         val unlockAmount = if (isBuy) (price * qty) / 100_000_000L else qty
         
-        val balance = getAccount(userId).getBalance(currencyId)
-        val actualUnlock = Math.min(unlockAmount, balance.locked)
-        
-        balance.locked -= actualUnlock
-        balance.available += actualUnlock
-        println("Risk: Order $orderId Cancelled. Refunded $actualUnlock to User $userId")
+        adjustBalance(userId, currencyId, unlockAmount, -unlockAmount)
+        println("Risk: Order $orderId Cancelled. Refunded $unlockAmount to User $userId")
     }
     
     fun deposit(userId: Long, currencyId: Int, amount: Long) {

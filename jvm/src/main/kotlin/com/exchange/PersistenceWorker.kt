@@ -163,14 +163,8 @@ fun saveOrder(conn: Connection, decoder: NewOrderSingleDecoder) {
         val currencyId = if (isBuy) 2 else 1
         val lockAmount = if (isBuy) (decoder.price() * decoder.qty()) / 100_000_000L else decoder.qty()
         
-        val balanceSql = "UPDATE balances SET available = available - ?, locked = locked + ? WHERE user_id = ? AND currency_id = ?"
-        conn.prepareStatement(balanceSql).use { stmt ->
-            stmt.setLong(1, lockAmount)
-            stmt.setLong(2, lockAmount)
-            stmt.setLong(3, decoder.userId())
-            stmt.setInt(4, currencyId)
-            stmt.executeUpdate()
-        }
+        // Use unified updateBalance
+        updateBalance(conn, decoder.userId(), currencyId, -lockAmount, lockAmount)
     }
 }
 
@@ -186,17 +180,7 @@ fun saveDeposit(conn: Connection, decoder: DepositDecoder) {
     }
     
     if (rowsAffected > 0) {
-        val updateBalanceSql = """
-            INSERT INTO balances (user_id, currency_id, available) VALUES (?, ?, ?) 
-            ON CONFLICT (user_id, currency_id) DO UPDATE SET available = balances.available + ?
-        """
-        conn.prepareStatement(updateBalanceSql).use { stmt ->
-            stmt.setLong(1, decoder.userId())
-            stmt.setInt(2, decoder.currencyId())
-            stmt.setLong(3, decoder.amount())
-            stmt.setLong(4, decoder.amount())
-            stmt.executeUpdate()
-        }
+        updateBalance(conn, decoder.userId(), decoder.currencyId(), decoder.amount(), 0)
     }
 }
 
@@ -212,28 +196,31 @@ fun saveWithdraw(conn: Connection, decoder: WithdrawRequestDecoder) {
     }
     
     if (rowsAffected > 0) {
-        val updateBalanceSql = "UPDATE balances SET locked = GREATEST(0, locked - ?) WHERE user_id = ? AND currency_id = ?"
-        conn.prepareStatement(updateBalanceSql).use { stmt ->
-            stmt.setLong(1, decoder.amount())
-            stmt.setLong(2, decoder.userId())
-            stmt.setInt(3, decoder.currencyId())
-            stmt.executeUpdate()
-        }
+        updateBalance(conn, decoder.userId(), decoder.currencyId(), 0, -decoder.amount())
     }
 }
 
 fun updateBalance(conn: Connection, userId: Long, currencyId: Int, availableDelta: Long, lockedDelta: Long) {
+    /**
+     * UNIFIED BALANCE UPDATE LOGIC (Inspired by Rust implementation)
+     * - availableDelta: Change in available balance (e.g., gain from trade, deposit, or deduct for locking)
+     * - lockedDelta: Change in locked balance (e.g., lock for order, deduct for trade)
+     * 
+     * If lockedDelta is negative (deducting from locked):
+     * - We deduct from locked first.
+     * - If locked is insufficient (remainder > 0), we deduct the rest from available.
+     * - Finally, GREATEST(0, ...) ensures no negative numbers.
+     */
     val sql = """
         INSERT INTO balances (user_id, currency_id, available, locked)
-        VALUES (?, ?, ?::bigint + LEAST(0::bigint, ?::bigint), GREATEST(0::bigint, ?::bigint))
+        VALUES (?, ?, GREATEST(0::bigint, ?::bigint), GREATEST(0::bigint, ?::bigint))
         ON CONFLICT (user_id, currency_id)
         DO UPDATE SET 
-            available = balances.available + 
+            available = GREATEST(0::bigint, balances.available + ?::bigint + 
                 CASE 
-                    WHEN ?::bigint < 0 AND ?::bigint > 0 THEN LEAST(-?::bigint, balances.locked) 
-                    WHEN ?::bigint < 0 THEN ?::bigint - GREATEST(0::bigint, -?::bigint - balances.locked) 
-                    ELSE ?::bigint 
-                END,
+                    WHEN ?::bigint < 0 THEN LEAST(0::bigint, balances.locked + ?::bigint)
+                    ELSE 0::bigint 
+                END),
             locked = GREATEST(0::bigint, balances.locked + ?::bigint)
     """
     conn.prepareStatement(sql).use { stmt ->
@@ -241,15 +228,12 @@ fun updateBalance(conn: Connection, userId: Long, currencyId: Int, availableDelt
         stmt.setInt(2, currencyId)
         stmt.setLong(3, availableDelta)
         stmt.setLong(4, lockedDelta)
-        stmt.setLong(5, lockedDelta)
+        
+        // For Update Part
+        stmt.setLong(5, availableDelta)
         stmt.setLong(6, lockedDelta)
-        stmt.setLong(7, availableDelta)
+        stmt.setLong(7, lockedDelta)
         stmt.setLong(8, lockedDelta)
-        stmt.setLong(9, lockedDelta)
-        stmt.setLong(10, availableDelta)
-        stmt.setLong(11, lockedDelta)
-        stmt.setLong(12, availableDelta)
-        stmt.setLong(13, lockedDelta)
         stmt.executeUpdate()
     }
 }
