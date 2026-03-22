@@ -73,9 +73,27 @@ All endpoints accept **JSON** payloads.
 
 ---
 
-## Quick Start
+## Quick Start (Standard Testing Flow)
 
-### 1. Build
+The easiest way to build, deploy, and verify the entire system is using the standardized scripts in the `scripts/` directory.
+
+### 1. Unified K8s Testing (Recommended)
+This automatically handles building, Kind cluster setup, deployment, and comprehensive test execution.
+
+```bash
+# For JVM (Kotlin) Stack
+./scripts/env-k8s.sh up-jvm
+./scripts/run-tests.sh
+
+# For Rust Stack
+./scripts/env-k8s.sh up-rust
+./scripts/run-tests.sh
+
+# Cleanup
+./scripts/env-k8s.sh down
+```
+
+### 2. Individual Component Build
 ```bash
 # JVM
 ./gradlew :jvm:shadowJar
@@ -84,41 +102,15 @@ All endpoints accept **JSON** payloads.
 cd rust && cargo build --release
 ```
 
-### 2. Run Locally (Bare Metal)
+### 3. Verification & Simulation
+After the stack is up (via `env-k8s.sh`), you can run individual tools:
 ```bash
-# JVM version
-./run-local.sh
+# Run all scenario tests + high-volume simulation + integrity audit
+./scripts/run-tests.sh
 
-# Rust version
-./run-local-rust.sh
-```
-
-### 3. Run with Docker Compose
-```bash
-# JVM version
-docker compose -f deploy/local/docker-compose.jvm.yml up --build
-
-# Rust version
-docker compose -f deploy/local/docker-compose.rust.yml up --build
-```
-
-### 4. Deploy to Kubernetes
-```bash
-# Rust
-docker build -f deploy/docker/Dockerfile.rust -t exchange-engine-rust:latest .
-kubectl apply -f deploy/k8s/base/db.yaml
-kubectl apply -f deploy/k8s/rust/apps.yaml
-
-# JVM
-docker build -f deploy/docker/Dockerfile.jvm -t exchange-engine-jvm:latest .
-kubectl apply -f deploy/k8s/base/db.yaml
-kubectl apply -f deploy/k8s/jvm/services.yaml
-kubectl apply -f deploy/k8s/jvm/apps.yaml
-```
-
-### 5. Verify Integrity
-```bash
-./scripts/verify-integrity.sh
+# Or run specific scenarios
+./scripts/test-scenario.sh
+./scripts/simulate-market.py
 ```
 
 ---

@@ -16,12 +16,19 @@
 3. **ME (Matching Engine)**: 오더북 기반 매칭 및 체결 이벤트 생성.
 4. **Persistence Worker**: 모든 상태 변화(주문, 체결, 잔고)를 DB에 비동기 저장.
 
-## 2.2 데이터 정합성 규칙
-* **주문 시**: `available -= amount`, `locked += amount`
-* **체결 시**: 
+## 2.2 자산 정합성 규칙 (Asset Integrity Rules)
+시스템은 어떠한 상황에서도 개별 사용자의 잔고가 음수가 되지 않도록 보장해야 한다.
+
+1. **주문 시 (Risk Check)**: 
+    * 지정가: `available -= (price * qty) / 10^8`, `locked += amount`
+    * 시장가 매수: `available -= (safety_price * qty) / 10^8`, `locked += amount` (실제 체결 시까지 임시 자산 잠금 수행)
+2. **체결 시 (Settlement)**: 
     * Maker: `locked -= matched_qty`, `available += matched_cost`
     * Taker: `locked -= matched_cost`, `available += matched_qty`
-* **취소 시**: `locked -= amount`, `available += amount`
+    * **중요 (Robustness)**: 만약 체결 비용이 `locked` 자산을 초과하는 경우(시장가 슬리피지 등), 부족분은 `available`에서 차감하되 **`GREATEST(0, ...)`** 처리를 통해 물리적인 음수 잔고 발생을 원천 차단한다.
+3. **취소 시 (Cancellation)**: 
+    * `locked -= leaves_qty`, `available += leaves_qty`
+    * 취소 시 반환되는 금액은 실제 `locked` 되어 있는 잔고를 초과할 수 없다.
 
 # 3. 기술 상세 사양 (Technical Specifications)
 

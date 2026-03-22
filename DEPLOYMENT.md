@@ -65,47 +65,32 @@ docker compose -f deploy/local/docker-compose.jvm.yml up --build
 docker compose -f deploy/local/docker-compose.rust.yml up --build
 ```
 
-## 5. Kubernetes (k8s) 배포 가이드
+## 5. Kubernetes (k8s) 배포 가이드 (Standard Flow)
 
-### 5.1 JVM 버전 (Aeron UDP)
+새로 도입된 통합 스크립트를 사용하면 Kind 클러스터 구축부터 배포까지 한 번에 완료할 수 있습니다.
 
+### 5.1 JVM 버전 배포
 ```bash
-# Kind 클러스터 생성
-kind create cluster --name exchange-cluster
-
-# JVM 빌드 및 Docker 이미지 생성
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/amazon-corretto-21.jdk/Contents/Home
-./gradlew :jvm:shadowJar
-
-for app in matching-engine ome gateway persistence-worker; do
-    docker build -f deploy/docker/Dockerfile.jvm -t exchange-engine-$app:v-pure-final .
-done
-
-# 이미지를 Kind 클러스터에 로드
-kind load docker-image exchange-engine-gateway:v-pure-final exchange-engine-ome:v-pure-final exchange-engine-matching-engine:v-pure-final exchange-engine-persistence-worker:v-pure-final --name exchange-cluster
-
-# 매니페스트 적용
-kubectl apply -f deploy/k8s/base/db.yaml
-kubectl apply -f deploy/k8s/jvm/services.yaml
-kubectl apply -f deploy/k8s/jvm/apps.yaml
+./scripts/env-k8s.sh up-jvm
 ```
-> **참고:** `persistence-worker`는 Aeron IPC 성능 최적화를 위해 `ome` 파드 내의 사이드카(Sidecar)로 배포됩니다.
+이 명령어는 다음을 수행합니다:
+1. `exchange-cluster` Kind 클러스터 생성 (없을 경우)
+2. JVM Shadow JAR 빌드 및 Docker 이미지 생성
+3. 이미지를 클러스터에 로드
+4. PostgreSQL(DB), ME, OME, Gateway 서비스 배포 및 준비 대기
+5. 8080 포트 포워딩 자동 시작
 
-### 5.2 Rust 버전 (TCP JSON)
-
+### 5.2 Rust 버전 배포
 ```bash
-# Docker 이미지 빌드
-docker build -f deploy/docker/Dockerfile.rust -t exchange-engine-rust:latest .
-
-# Kind 클러스터에 로드
-kind load docker-image exchange-engine-rust:latest --name exchange-cluster
-
-# 매니페스트 적용
-kubectl apply -f deploy/k8s/base/db.yaml
-kubectl apply -f deploy/k8s/rust/apps.yaml
+./scripts/env-k8s.sh up-rust
 ```
-> Rust 버전은 Aeron/shared memory 없이 순수 TCP 통신만 사용하므로 배포가 더 간결합니다.
-> ME는 포트 5559에서 OrderBook 스냅샷을 broadcast하며, Gateway가 이를 구독하여 `/orderbook` API에 반영합니다.
+Rust 버전은 Aeron 미디어 드라이버가 필요 없으므로 배포가 더 빠르고 간결합니다.
+
+### 5.3 배포 정리 (Teardown)
+```bash
+./scripts/env-k8s.sh down
+```
+클러스터를 삭제하고 로컬 로그 및 임시 파일을 정리합니다.
 
 ### 5.3 포트포워딩 및 테스트
 ```bash
