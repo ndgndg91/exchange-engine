@@ -17,18 +17,42 @@
 4. **Persistence Worker**: 모든 상태 변화(주문, 체결, 잔고)를 DB에 비동기 저장.
 
 ## 2.2 자산 정합성 규칙 (Asset Integrity Rules)
-시스템은 어떠한 상황에서도 개별 사용자의 잔고가 음수가 되지 않도록 보장해야 한다.
+시스템은 어떠한 상황에서도 개별 사용자의 잔고가 음수가 되지 않도록 보장해야 한다. 또한 거래소 수익 계정을 포함한 전체 자산의 합은 일정해야 한다.
 
-1. **주문 시 (Risk Check)**: 
-    * 지정가: `available -= (price * qty) / 10^8`, `locked += amount`
-    * 시장가 매수: `available -= (safety_price * qty) / 10^8`, `locked += amount` (실제 체결 시까지 임시 자산 잠금 수행)
-2. **체결 시 (Settlement)**: 
-    * Maker: `locked -= matched_qty`, `available += matched_cost`
-    * Taker: `locked -= matched_cost`, `available += matched_qty`
-    * **중요 (Robustness)**: 만약 체결 비용이 `locked` 자산을 초과하는 경우(시장가 슬리피지 등), 부족분은 `available`에서 차감하되 **`GREATEST(0, ...)`** 처리를 통해 물리적인 음수 잔고 발생을 원천 차단한다.
-3. **취소 시 (Cancellation)**: 
-    * `locked -= leaves_qty`, `available += leaves_qty`
-    * 취소 시 반환되는 금액은 실제 `locked` 되어 있는 잔고를 초과할 수 없다.
+1. **전체 자산 보존 법칙**: 
+   `Sum(User Deposits) == Sum(User Balances) + Exchange Revenue (User ID 0)`
+2. **주문 시 (Risk Check)**: 
+    * 지정가: `available -= (price * qty) / 10^8 + max_fee`, `locked += amount + max_fee`
+    * 시장가 매수: `available -= (safety_price * qty) / 10^8 + max_fee`, `locked += amount + max_fee`
+3. **체결 시 (Settlement)**: 
+    * **Taker**: `locked`에서 체결 비용과 실제 수수료를 차감. 남은 수수료 잠금분은 `available`로 반환.
+    * **Maker**: `locked`에서 체결 자산을 차감하고, `available`에 체결 수익을 더함. (수수료/리베이트 적용)
+    * **Exchange (ID 0)**: 발생한 모든 수수료 수익(+) 또는 리베이트 지출(-)이 합산됨.
+
+... (중략) ...
+
+# 5. 수수료 및 보상 시스템 (Fee & Reward System)
+
+## 5.1 수수료 단위 및 계산
+* **BPS (Basis Points)**: 모든 수수료율은 정수형 BPS 단위를 사용한다. (10 BPS = 0.1%, 1 BPS = 0.01%)
+* **정수 연산**: `Fee = (Cost * BPS) / 10,000` (소수점 버림 처리)
+
+## 5.2 유연한 수수료 정책 (Dynamic Tiers)
+사용자 등급(Tier) 및 마켓별 정책에 따라 Maker/Taker 수수료를 유동적으로 적용한다.
+* **Positive BPS**: 사용자가 거래소에 지불하는 수수료.
+* **Negative BPS (Maker Rebate)**: 거래소가 메이커에게 지급하는 보상. 유동성 공급을 장려하기 위해 사용됨.
+
+## 5.3 유동성 보상 프로그램 (Liquidity Provider Rewards)
+1. **즉시 리베이트 (Instant Rebate)**: 
+   * 대상: 지정된 마켓 메이커(MM) 등급 사용자.
+   * 로직: 체결 즉시 리베이트 금액(Negative BPS)이 사용자 잔고에 반영됨.
+2. **사후 보상 프로그램 (Periodic Rewards)**:
+   * 대상: 일반 유동성 공급자 및 이벤트 참여자.
+   * 로직: 엔진 외부의 통계 시스템이 호가 유지 시간(Time-weighted Liquidity)을 측정하여 배치(Batch)로 보상 지급.
+
+## 5.4 거래소 수익 계정 (Exchange Revenue Account)
+* **User ID 0**: 시스템에서 발생하는 모든 수수료 수익과 리베이트 지출을 관리하는 가상 계정.
+* 모든 체결 이벤트 시 발생하는 수수료 흐름은 반드시 이 계정을 거쳐야 하며, 이를 통해 실시간 손익(P&L) 파악 및 자산 감사가 가능하다.
 
 # 3. 기술 상세 사양 (Technical Specifications)
 
