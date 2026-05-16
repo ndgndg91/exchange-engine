@@ -1,0 +1,5 @@
+/Users/ndgndg91/IdeaProjects/exchange-engine/rust/target/debug/deps/subtle-2602a581596ca54b.d: /Users/ndgndg91/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/subtle-2.6.1/src/lib.rs
+
+/Users/ndgndg91/IdeaProjects/exchange-engine/rust/target/debug/deps/libsubtle-2602a581596ca54b.rmeta: /Users/ndgndg91/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/subtle-2.6.1/src/lib.rs
+
+/Users/ndgndg91/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/subtle-2.6.1/src/lib.rs:
